@@ -11,60 +11,60 @@ namespace {
 
 struct RemainderExpansionPass : public PassInfoMixin<RemainderExpansionPass> {
 
-  Value *processRemainder(Instruction *I) {
-    IRBuilder<> Builder(I);
-    Value *OpA = I->getOperand(0);
-    Value *OpB = I->getOperand(1);
+  Value *expandRemOp(Instruction *I) {
+    IRBuilder<> B(I);
+    Value *ValA = I->getOperand(0);
+    Value *ValB = I->getOperand(1);
     auto OpCode = I->getOpcode();
 
     if (OpCode == Instruction::SRem) {
-      Value *SDiv = Builder.CreateSDiv(OpA, OpB, "rem.sdiv");
-      Value *SMul = Builder.CreateMul(SDiv, OpB, "rem.smul");
-      return Builder.CreateSub(OpA, SMul, "rem.sres");
+      Value *DivS = B.CreateSDiv(ValA, ValB, "rem.sdiv");
+      Value *MulS = B.CreateMul(DivS, ValB, "rem.smul");
+      return B.CreateSub(ValA, MulS, "rem.sres");
     }
 
     if (OpCode == Instruction::URem) {
-      Value *UDiv = Builder.CreateUDiv(OpA, OpB, "rem.udiv");
-      Value *UMul = Builder.CreateMul(UDiv, OpB, "rem.umul");
-      return Builder.CreateSub(OpA, UMul, "rem.ures");
+      Value *DivU = B.CreateUDiv(ValA, ValB, "rem.udiv");
+      Value *MulU = B.CreateMul(DivU, ValB, "rem.umul");
+      return B.CreateSub(ValA, MulU, "rem.ures");
     }
 
     if (OpCode == Instruction::FRem) {
-      Value *FDiv = Builder.CreateFDiv(OpA, OpB, "rem.fdiv");
-      // Разбиваем строку для соблюдения clang-format
-      Value *Trunc = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, FDiv,
-                                                  nullptr, "rem.ftrunc");
-      Value *FMul = Builder.CreateFMul(Trunc, OpB, "rem.fmul");
-      return Builder.CreateFSub(OpA, FMul, "rem.fres");
+      Value *DivF = B.CreateFDiv(ValA, ValB, "rem.fdiv");
+      // Форматирование согласно требованиям clang-format
+      Value *Trunc =
+          B.CreateUnaryIntrinsic(Intrinsic::trunc, DivF, nullptr, "rem.ftrunc");
+      Value *MulF = B.CreateFMul(Trunc, ValB, "rem.fmul");
+      return B.CreateFSub(ValA, MulF, "rem.fres");
     }
 
     return nullptr;
   }
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
-    bool IsChanged = false;
-    SmallVector<Instruction *, 32> ToProcess;
+    bool Changed = false;
+    SmallVector<Instruction *, 32> InstList;
 
     for (auto &BB : F) {
       for (auto &I : BB) {
         unsigned Op = I.getOpcode();
-        // Разбиваем строку для соблюдения clang-format
+        // Форматирование согласно требованиям clang-format
         if (Op == Instruction::SRem || Op == Instruction::URem ||
             Op == Instruction::FRem) {
-          ToProcess.push_back(&I);
+          InstList.push_back(&I);
         }
       }
     }
 
-    for (Instruction *I : ToProcess) {
-      if (Value *Replacement = processRemainder(I)) {
-        I->replaceAllUsesWith(Replacement);
+    for (Instruction *I : InstList) {
+      if (Value *NewInst = expandRemOp(I)) {
+        I->replaceAllUsesWith(NewInst);
         I->eraseFromParent();
-        IsChanged = true;
+        Changed = true;
       }
     }
 
-    return IsChanged ? PreservedAnalyses::none() : PreservedAnalyses::all();
+    return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
 
   static bool isRequired() { return true; }
