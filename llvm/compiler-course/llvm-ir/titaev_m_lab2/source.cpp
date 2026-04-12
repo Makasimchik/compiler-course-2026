@@ -31,8 +31,9 @@ struct RemainderDecPass : public PassInfoMixin<RemainderDecPass> {
 
     if (Code == Instruction::FRem) {
       Value *DivF = Builder.CreateFDiv(Left, Right, "f.div");
-      // Используем тот же подход с intrinsic, но с другими именами
-      Value *TruncF = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, DivF, nullptr, "f.trunc");
+      // Перенос строки для соответствия clang-format
+      Value *TruncF = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, DivF,
+                                                   nullptr, "f.trunc");
       Value *MulF = Builder.CreateFMul(TruncF, Right, "f.mul");
       return Builder.CreateFSub(Left, MulF, "f.rem.res");
     }
@@ -42,14 +43,14 @@ struct RemainderDecPass : public PassInfoMixin<RemainderDecPass> {
 
   PreservedAnalyses run(Function &Func, FunctionAnalysisManager &) {
     bool MadeChange = false;
-    // Сохранили SmallVector, как у друга
     SmallVector<Instruction *, 32> WorkList;
 
-    // Проход по всем инструкциям функции
     for (auto &Block : Func) {
       for (auto &Inst : Block) {
         unsigned Op = Inst.getOpcode();
-        if (Op == Instruction::SRem || Op == Instruction::URem || Op == Instruction::FRem) {
+        // Перенос строки в условии
+        if (Op == Instruction::SRem || Op == Instruction::URem ||
+            Op == Instruction::FRem) {
           WorkList.push_back(&Inst);
         }
       }
