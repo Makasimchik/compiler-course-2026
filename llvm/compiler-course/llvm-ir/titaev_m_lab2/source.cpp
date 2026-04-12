@@ -9,62 +9,62 @@ using namespace llvm;
 
 namespace {
 
-struct RemainderDecPass : public PassInfoMixin<RemainderDecPass> {
+struct RemainderExpansionPass : public PassInfoMixin<RemainderExpansionPass> {
 
-  Value *expandRem(Instruction *I) {
+  Value *processRemainder(Instruction *I) {
     IRBuilder<> Builder(I);
-    Value *Left = I->getOperand(0);
-    Value *Right = I->getOperand(1);
-    auto Code = I->getOpcode();
+    Value *OpA = I->getOperand(0);
+    Value *OpB = I->getOperand(1);
+    auto OpCode = I->getOpcode();
 
-    if (Code == Instruction::SRem) {
-      Value *DivS = Builder.CreateSDiv(Left, Right, "s.div");
-      Value *MulS = Builder.CreateMul(DivS, Right, "s.mul");
-      return Builder.CreateSub(Left, MulS, "s.rem.res");
+    if (OpCode == Instruction::SRem) {
+      Value *SDiv = Builder.CreateSDiv(OpA, OpB, "rem.sdiv");
+      Value *SMul = Builder.CreateMul(SDiv, OpB, "rem.smul");
+      return Builder.CreateSub(OpA, SMul, "rem.sres");
     }
 
-    if (Code == Instruction::URem) {
-      Value *DivU = Builder.CreateUDiv(Left, Right, "u.div");
-      Value *MulU = Builder.CreateMul(DivU, Right, "u.mul");
-      return Builder.CreateSub(Left, MulU, "u.rem.res");
+    if (OpCode == Instruction::URem) {
+      Value *UDiv = Builder.CreateUDiv(OpA, OpB, "rem.udiv");
+      Value *UMul = Builder.CreateMul(UDiv, OpB, "rem.umul");
+      return Builder.CreateSub(OpA, UMul, "rem.ures");
     }
 
-    if (Code == Instruction::FRem) {
-      Value *DivF = Builder.CreateFDiv(Left, Right, "f.div");
-      // Перенос строки для соответствия clang-format
-      Value *TruncF = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, DivF,
-                                                   nullptr, "f.trunc");
-      Value *MulF = Builder.CreateFMul(TruncF, Right, "f.mul");
-      return Builder.CreateFSub(Left, MulF, "f.rem.res");
+    if (OpCode == Instruction::FRem) {
+      Value *FDiv = Builder.CreateFDiv(OpA, OpB, "rem.fdiv");
+      // Разбиваем строку для соблюдения clang-format
+      Value *Trunc = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, FDiv,
+                                                  nullptr, "rem.ftrunc");
+      Value *FMul = Builder.CreateFMul(Trunc, OpB, "rem.fmul");
+      return Builder.CreateFSub(OpA, FMul, "rem.fres");
     }
 
     return nullptr;
   }
 
-  PreservedAnalyses run(Function &Func, FunctionAnalysisManager &) {
-    bool MadeChange = false;
-    SmallVector<Instruction *, 32> WorkList;
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
+    bool IsChanged = false;
+    SmallVector<Instruction *, 32> ToProcess;
 
-    for (auto &Block : Func) {
-      for (auto &Inst : Block) {
-        unsigned Op = Inst.getOpcode();
-        // Перенос строки в условии
+    for (auto &BB : F) {
+      for (auto &I : BB) {
+        unsigned Op = I.getOpcode();
+        // Разбиваем строку для соблюдения clang-format
         if (Op == Instruction::SRem || Op == Instruction::URem ||
             Op == Instruction::FRem) {
-          WorkList.push_back(&Inst);
+          ToProcess.push_back(&I);
         }
       }
     }
 
-    for (Instruction *Inst : WorkList) {
-      if (Value *NewVal = expandRem(Inst)) {
-        Inst->replaceAllUsesWith(NewVal);
-        Inst->eraseFromParent();
-        MadeChange = true;
+    for (Instruction *I : ToProcess) {
+      if (Value *Replacement = processRemainder(I)) {
+        I->replaceAllUsesWith(Replacement);
+        I->eraseFromParent();
+        IsChanged = true;
       }
     }
 
-    return MadeChange ? PreservedAnalyses::none() : PreservedAnalyses::all();
+    return IsChanged ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
 
   static bool isRequired() { return true; }
@@ -74,13 +74,13 @@ struct RemainderDecPass : public PassInfoMixin<RemainderDecPass> {
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "RemainderDecPlugin", "1.0",
+  return {LLVM_PLUGIN_API_VERSION, "RemainderExpansionPlugin", "1.0",
           [](PassBuilder &PB) {
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, FunctionPassManager &FPM,
                    ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "rem-decompose-pass") {
-                    FPM.addPass(RemainderDecPass());
+                  if (Name == "expand-rem") {
+                    FPM.addPass(RemainderExpansionPass());
                     return true;
                   }
                   return false;
