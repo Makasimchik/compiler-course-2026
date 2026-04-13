@@ -9,62 +9,62 @@ using namespace llvm;
 
 namespace {
 
-struct RemainderExpansionPass : public PassInfoMixin<RemainderExpansionPass> {
+struct TitaevMRemainderExpansion
+    : public PassInfoMixin<TitaevMRemainderExpansion> {
 
-  Value *expandRemOp(Instruction *I) {
-    IRBuilder<> B(I);
-    Value *ValA = I->getOperand(0);
-    Value *ValB = I->getOperand(1);
-    auto OpCode = I->getOpcode();
+  Value *transformRem(Instruction *Inst) {
+    IRBuilder<> Builder(Inst);
+    Value *OpL = Inst->getOperand(0);
+    Value *OpR = Inst->getOperand(1);
+    unsigned OpCode = Inst->getOpcode();
 
     if (OpCode == Instruction::SRem) {
-      Value *DivS = B.CreateSDiv(ValA, ValB, "rem.sdiv");
-      Value *MulS = B.CreateMul(DivS, ValB, "rem.smul");
-      return B.CreateSub(ValA, MulS, "rem.sres");
+      Value *DivS = Builder.CreateSDiv(OpL, OpR, "titaev.s.div");
+      Value *MulS = Builder.CreateMul(DivS, OpR, "titaev.s.mul");
+      return Builder.CreateSub(OpL, MulS, "titaev.s.res");
     }
 
     if (OpCode == Instruction::URem) {
-      Value *DivU = B.CreateUDiv(ValA, ValB, "rem.udiv");
-      Value *MulU = B.CreateMul(DivU, ValB, "rem.umul");
-      return B.CreateSub(ValA, MulU, "rem.ures");
+      Value *DivU = Builder.CreateUDiv(OpL, OpR, "titaev.u.div");
+      Value *MulU = Builder.CreateMul(DivU, OpR, "titaev.u.mul");
+      return Builder.CreateSub(OpL, MulU, "titaev.u.res");
     }
 
     if (OpCode == Instruction::FRem) {
-      Value *DivF = B.CreateFDiv(ValA, ValB, "rem.fdiv");
-      // Форматирование согласно требованиям clang-format
-      Value *Trunc =
-          B.CreateUnaryIntrinsic(Intrinsic::trunc, DivF, nullptr, "rem.ftrunc");
-      Value *MulF = B.CreateFMul(Trunc, ValB, "rem.fmul");
-      return B.CreateFSub(ValA, MulF, "rem.fres");
+      Value *DivF = Builder.CreateFDiv(OpL, OpR, "titaev.f.div");
+      // Форматирование для clang-format (разрыв длинной строки)
+      Value *Trunc = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, DivF,
+                                                  nullptr, "titaev.f.trunc");
+      Value *MulF = Builder.CreateFMul(Trunc, OpR, "titaev.f.mul");
+      return Builder.CreateFSub(OpL, MulF, "titaev.f.res");
     }
 
     return nullptr;
   }
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
-    bool Changed = false;
-    SmallVector<Instruction *, 32> InstList;
+    bool IsChanged = false;
+    SmallVector<Instruction *, 32> WorkList;
 
     for (auto &BB : F) {
       for (auto &I : BB) {
         unsigned Op = I.getOpcode();
-        // Форматирование согласно требованиям clang-format
         if (Op == Instruction::SRem || Op == Instruction::URem ||
             Op == Instruction::FRem) {
-          InstList.push_back(&I);
+          WorkList.push_back(&I);
         }
       }
     }
 
-    for (Instruction *I : InstList) {
-      if (Value *NewInst = expandRemOp(I)) {
-        I->replaceAllUsesWith(NewInst);
+    for (Instruction *I : WorkList) {
+      if (Value *Replacement = transformRem(I)) {
+        I->replaceAllUsesWith(Replacement);
         I->eraseFromParent();
-        Changed = true;
+        IsChanged = true;
       }
     }
 
-    return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+    return IsChanged ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
 
   static bool isRequired() { return true; }
@@ -74,13 +74,13 @@ struct RemainderExpansionPass : public PassInfoMixin<RemainderExpansionPass> {
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "RemainderExpansionPlugin", "1.0",
+  return {LLVM_PLUGIN_API_VERSION, "TitaevMRemainderExpansionPlugin", "1.0",
           [](PassBuilder &PB) {
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, FunctionPassManager &FPM,
                    ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "expand-rem") {
-                    FPM.addPass(RemainderExpansionPass());
+                  if (Name == "titaev-m-expand-rem") {
+                    FPM.addPass(TitaevMRemainderExpansion());
                     return true;
                   }
                   return false;
