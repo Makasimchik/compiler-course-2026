@@ -1,0 +1,67 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/example_BACKEND%shlibext \
+# RUN: -run-pass=example-x86 %s -o - | FileCheck %s
+
+--- |
+  define void @loop_5_iters() { entry: ret void }
+  define void @loop_10_iters() { entry: ret void }
+  define void @nested_loop() { entry: ret void }
+...
+---
+# CHECK-LABEL: name: loop_5_iters
+# CHECK: ADD32ri8
+# CHECK: ADD32ri8
+# CHECK: ADD32ri8
+# CHECK: ADD32ri8
+# CHECK-NOT: JCC_1
+name:            loop_5_iters
+body:             |
+  bb.0:
+    $eax = MOV32ri 0
+  bb.1:
+    successors: %bb.1, %bb.2
+    $eax = ADD32ri8 $eax, 1, implicit-def $eflags
+    CMP32ri8 $eax, 4, implicit-def $eflags
+    JCC_1 %bb.1, 13, implicit $eflags
+  bb.2:
+    RET64 $al
+---
+# CHECK-LABEL: name: loop_10_iters
+# CHECK: CMP32ri8 $eax, 10
+# CHECK: JCC_1 %bb.1
+name:            loop_10_iters
+body:             |
+  bb.0:
+    $eax = MOV32ri 0
+  bb.1:
+    successors: %bb.1, %bb.2
+    $eax = ADD32ri8 $eax, 1, implicit-def $eflags
+    CMP32ri8 $eax, 10, implicit-def $eflags
+    JCC_1 %bb.1, 13, implicit $eflags
+  bb.2:
+    RET64 $al
+---
+# CHECK-LABEL: name: nested_loop
+# CHECK: bb.2:
+# CHECK: ADD32ri8 $ecx, 1
+# CHECK: ADD32ri8 $ecx, 1
+# CHECK: ADD32ri8 $ecx, 1
+# CHECK-NOT: JCC_1 %bb.2
+name:            nested_loop
+body:             |
+  bb.0:
+    $eax = MOV32ri 0
+  bb.1:
+    successors: %bb.2
+    $ecx = MOV32ri 0
+  bb.2:
+    successors: %bb.2, %bb.3
+    $ecx = ADD32ri8 $ecx, 1, implicit-def $eflags
+    CMP32ri8 $ecx, 3, implicit-def $eflags
+    JCC_1 %bb.2, 13, implicit $eflags
+  bb.3:
+    successors: %bb.1, %bb.4
+    $eax = ADD32ri8 $eax, 1, implicit-def $eflags
+    CMP32ri8 $eax, 10, implicit-def $eflags
+    JCC_1 %bb.1, 13, implicit $eflags
+  bb.4:
+    RET64
