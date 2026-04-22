@@ -1,4 +1,5 @@
-# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/example_BACKEND%shlibext \
+# RUN: llc -mtriple x86_64-unknown-linux-gnu \
+# RUN: -load=%llvmshlibdir/titaev_m_lab3_BACKEND%shlibext \
 # RUN: -run-pass=example-x86 %s -o - | FileCheck %s
 
 --- |
@@ -13,6 +14,7 @@ body:             |
     $eax = MOV32ri 42
     RET64
 ---
+# Проверяем встраивание обычной функции (15 инструкций лимит)
 # CHECK-LABEL: name: caller_func
 # CHECK-NOT: CALL64pcrel32 @callee_func
 # CHECK: $eax = MOV32ri 42
@@ -23,11 +25,14 @@ body:             |
     CALL64pcrel32 @callee_func, implicit $rsp, implicit $ssp, implicit-def $rsp, implicit-def $ssp
     RET64
 ---
+# Проверяем глубину рекурсии (лимит 3). 
+# Должно появиться 4 копии инструкции (1 исходная + 3 встроенных)
 # CHECK-LABEL: name: recursive_func
-# CHECK: MOV32ri 7
-# CHECK: MOV32ri 7
-# CHECK: MOV32ri 7
-# CHECK: MOV32ri 7
+# CHECK: $edi = MOV32ri 7
+# CHECK: $edi = MOV32ri 7
+# CHECK: $edi = MOV32ri 7
+# CHECK: $edi = MOV32ri 7
+# CHECK: CALL64pcrel32 @recursive_func
 name:            recursive_func
 body:             |
   bb.0:
