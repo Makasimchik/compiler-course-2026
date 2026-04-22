@@ -24,33 +24,35 @@ public:
   bool runOnMachineFunction(MachineFunction &MF) override {
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
     bool GlobalChanged = false;
-    unsigned Depth = 0;
 
-    while (Depth < MaxDepth) {
+    for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
+      SmallVector<MachineInstr *, 8> CallsToInline;
 
+      // 1. Сначала находим все вызовы, которые подходят под условия
       for (auto &MBB : MF) {
-        for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &Instr = *MI++;
-
-          if (Instr.isCall()) {
-            MachineFunction *Callee = getCallee(Instr, MF, MMI);
-
+        for (auto &MI : MBB) {
+          if (MI.isCall()) {
+            MachineFunction *Callee = getCallee(MI, MF, MMI);
             if (Callee && shouldInline(*Callee)) {
-              performInline(MBB, Instr, *Callee);
-              LocalChanged = true;
-              GlobalChanged = true;
-              break;
+              CallsToInline.push_back(&MI);
             }
           }
         }
-        if (LocalChanged)
-          break;
+      }
+
+      // 2. Встраиваем найденные вызовы
+      for (MachineInstr *CI : CallsToInline) {
+        MachineFunction *Callee = getCallee(*CI, MF, MMI);
+        if (Callee) {
+          performInline(*CI->getParent(), *CI, *Callee);
+          LocalChanged = true;
+          GlobalChanged = true;
+        }
       }
 
       if (!LocalChanged)
         break;
-      Depth++;
     }
 
     return GlobalChanged;
@@ -91,16 +93,23 @@ private:
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
                      MachineFunction &Callee) {
     MachineFunction &Caller = *MBB.getParent();
+    SmallVector<MachineInstr *, 16> InstsToClone;
+
+    // Сначала собираем инструкции в список, чтобы избежать проблем
+    // при само-встраивании (рекурсии)
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
-        if (CMI.isReturn() || CMI.isTerminator())
-          continue;
-
-        MachineInstr *Cloned = Caller.CloneMachineInstr(&CMI);
-        MBB.insert(CallInst, Cloned);
+        if (!CMI.isReturn() && !CMI.isTerminator()) {
+          InstsToClone.push_back(&CMI);
+        }
       }
     }
-    // Удаляем оригинальный вызов
+
+    for (auto *Inst : InstsToClone) {
+      MachineInstr *Cloned = Caller.CloneMachineInstr(Inst);
+      MBB.insert(CallInst, Cloned);
+    }
+
     CallInst.eraseFromParent();
   }
 };
