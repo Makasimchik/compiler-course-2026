@@ -16,50 +16,56 @@ public:
   static char ID;
   ExamplePass() : MachineFunctionPass(ID) {}
 
-  // Обязательно объявляем использование MachineModuleInfo
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<MachineModuleInfoWrapperPass>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    return inlineInFunction(MF, 0);
+    auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
+    bool GlobalChanged = false;
+    unsigned Depth = 0;
+
+    while (Depth < MaxDepth) {
+      bool LocalChanged = false;
+
+      for (auto &MBB : MF) {
+        for (auto MI = MBB.begin(); MI != MBB.end();) {
+          MachineInstr &Instr = *MI++;
+
+          if (Instr.isCall()) {
+            MachineFunction *Callee = getCallee(Instr, MF, MMI);
+
+            if (Callee && shouldInline(*Callee)) {
+              performInline(MBB, Instr, *Callee);
+              LocalChanged = true;
+              GlobalChanged = true;
+              break;
+            }
+          }
+        }
+        if (LocalChanged)
+          break;
+      }
+
+      if (!LocalChanged)
+        break;
+      Depth++;
+    }
+
+    return GlobalChanged;
   }
 
 private:
   static constexpr unsigned MaxInstrs = 15;
   static constexpr unsigned MaxDepth = 3;
 
-  bool inlineInFunction(MachineFunction &MF, unsigned Depth) {
-    if (Depth >= MaxDepth)
-      return false;
-
-    // Получаем MMI из анализа
-    auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
-    bool Changed = false;
-
-    for (auto &MBB : MF) {
-      for (auto MI = MBB.begin(); MI != MBB.end(); ++MI) {
-        if (MI->isCall()) {
-          MachineFunction *Callee = getCallee(*MI, MF, MMI);
-          if (Callee && shouldInline(*Callee)) {
-            performInline(MBB, MI, *Callee);
-            Changed = true;
-            inlineInFunction(MF, Depth + 1);
-            return true;
-          }
-        }
-      }
-    }
-    return Changed;
-  }
-
   MachineFunction *getCallee(MachineInstr &MI, MachineFunction &Caller,
                              MachineModuleInfo &MMI) {
     for (auto &MO : MI.operands()) {
       if (MO.isGlobal()) {
         if (auto *F = dyn_cast<Function>(MO.getGlobal()))
-          return MMI.getMachineFunction(*F); // Используем переданный MMI
+          return MMI.getMachineFunction(*F);
       }
       if (MO.isSymbol()) {
         const char *Sym = MO.getSymbolName();
@@ -82,8 +88,7 @@ private:
     return Count > 0 && Count <= MaxInstrs;
   }
 
-  void performInline(MachineBasicBlock &MBB,
-                     MachineBasicBlock::iterator &CallPos,
+  void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
                      MachineFunction &Callee) {
     MachineFunction &Caller = *MBB.getParent();
     for (auto &CBB : Callee) {
@@ -92,10 +97,11 @@ private:
           continue;
 
         MachineInstr *Cloned = Caller.CloneMachineInstr(&CMI);
-        MBB.insert(CallPos, Cloned);
+        MBB.insert(CallInst, Cloned);
       }
     }
-    CallPos->eraseFromParent();
+    // Удаляем оригинальный вызов
+    CallInst.eraseFromParent();
   }
 };
 
