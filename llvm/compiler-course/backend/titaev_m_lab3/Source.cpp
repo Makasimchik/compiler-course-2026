@@ -1,9 +1,11 @@
 #include "X86.h"
 #include "X86InstrInfo.h"
 #include "X86Subtarget.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/IR/Module.h"
 
 using namespace llvm;
 
@@ -14,76 +16,80 @@ public:
   ExamplePass() : MachineFunctionPass(ID) {}
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    bool Changed = false;
-    const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
-    SmallVector<MachineBasicBlock *, 4> LoopBlocks;
-
-    for (auto &MBB : MF) {
-      for (auto *Succ : MBB.successors()) {
-        if (Succ == &MBB) {
-          LoopBlocks.push_back(&MBB);
-          break;
-        }
-      }
-    }
-
-    for (auto *MBB : LoopBlocks)
-      Changed |= tryUnrollLoop(MBB, TII);
-
-    return Changed;
+    return inlineInFunction(MF, 0);
   }
 
 private:
-  static constexpr int MaxUnrollLimit = 5;
+  static constexpr unsigned MaxInstrs = 15;
+  static constexpr unsigned MaxDepth = 3;
 
-  bool tryUnrollLoop(MachineBasicBlock *MBB, const TargetInstrInfo *TII) {
-    int TripCount = -1;
-    MachineInstr *CmpInstr = nullptr;
-    MachineInstr *JccInstr = nullptr;
+  bool inlineInFunction(MachineFunction &MF, unsigned Depth) {
+    if (Depth >= MaxDepth)
+      return false;
 
-    for (auto &MI : *MBB) {
-      unsigned Opc = MI.getOpcode();
-      if (Opc == X86::CMP32ri8 || Opc == X86::CMP32ri) {
-        CmpInstr = &MI;
-        for (const auto &Op : MI.operands()) {
-          if (Op.isImm()) {
-            TripCount = Op.getImm();
-            break;
+    bool Changed = false;
+    for (auto &MBB : MF) {
+      for (auto MI = MBB.begin(); MI != MBB.end(); ++MI) {
+        if (MI->isCall()) {
+          MachineFunction *Callee = getCallee(*MI, MF);
+          if (Callee && shouldInline(*Callee)) {
+            performInline(MBB, MI, *Callee);
+            Changed = true;
+            inlineInFunction(MF, Depth + 1);
+            return true;
           }
         }
       }
-      if (MI.isConditionalBranch())
-        JccInstr = &MI;
     }
+    return Changed;
+  }
 
-    if (TripCount <= 1 || TripCount > MaxUnrollLimit || !CmpInstr || !JccInstr)
-      return false;
-
-    SmallVector<MachineInstr *, 8> BodyInsts;
-    for (auto &MI : *MBB) {
-      if (MI.isTerminator() || &MI == CmpInstr)
-        continue;
-      BodyInsts.push_back(&MI);
-    }
-
-    MachineBasicBlock::iterator InsertPt = CmpInstr->getIterator();
-    for (int i = 1; i < TripCount; ++i) {
-      for (auto *OriginalMI : BodyInsts) {
-        MachineInstr *Cloned = MBB->getParent()->CloneMachineInstr(OriginalMI);
-        MBB->insert(InsertPt, Cloned);
+  MachineFunction *getCallee(MachineInstr &MI, MachineFunction &Caller) {
+    for (auto &MO : MI.operands()) {
+      if (MO.isGlobal()) {
+        if (auto *F = dyn_cast<Function>(MO.getGlobal()))
+          return Caller.getMMI().getMachineFunction(*F);
+      }
+      if (MO.isSymbol()) {
+        const char *Sym = MO.getSymbolName();
+        auto &M = *Caller.getFunction().getParent();
+        if (auto *F = M.getFunction(Sym))
+          return Caller.getMMI().getMachineFunction(*F);
       }
     }
+    return nullptr;
+  }
 
-    JccInstr->eraseFromParent();
-    CmpInstr->eraseFromParent();
-    MBB->removeSuccessor(MBB);
+  bool shouldInline(MachineFunction &Callee) {
+    unsigned Count = 0;
+    for (auto &MBB : Callee) {
+      for (auto &MI : MBB) {
+        if (!MI.isTerminator())
+          Count++;
+      }
+    }
+    return Count > 0 && Count <= MaxInstrs;
+  }
 
-    return true;
+  void performInline(MachineBasicBlock &MBB,
+                     MachineBasicBlock::iterator &CallPos,
+                     MachineFunction &Callee) {
+    MachineFunction &Caller = *MBB.getParent();
+    for (auto &CBB : Callee) {
+      for (auto &CMI : CBB) {
+        if (CMI.isReturn() || CMI.isTerminator())
+          continue;
+
+        MachineInstr *Cloned = Caller.CloneMachineInstr(&CMI);
+        MBB.insert(CallPos, Cloned);
+      }
+    }
+    CallPos->eraseFromParent();
   }
 };
 
 char ExamplePass::ID = 0;
 } // namespace
 
-static RegisterPass<ExamplePass> X("example-x86", "X86 Loop Unrolling Pass",
-                                   false, false);
+static RegisterPass<ExamplePass>
+    X("example-x86", "X86 Machine Function Inliner", false, false);
