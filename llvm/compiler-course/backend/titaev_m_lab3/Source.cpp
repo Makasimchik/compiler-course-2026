@@ -13,7 +13,8 @@
 using namespace llvm;
 
 namespace {
-static std::map<std::string, MachineFunction *> Registry;
+// Реестр имен для поиска функций в рамках одного прохода компилятора
+static std::map<std::string, MachineFunction *> FunctionRegistry;
 
 class ExamplePass : public MachineFunctionPass {
 public:
@@ -26,19 +27,20 @@ public:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    // Сохраняем текущую функцию в реестр
-    std::string MFName = MF.getName().str();
-    Registry[MFName] = &MF;
+    // Регистрируем текущую функцию, чтобы её могли найти другие (для
+    // инлайнинга)
+    FunctionRegistry[MF.getName().str()] = &MF;
 
     bool Changed = false;
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
 
+    // Цикл по глубине (ограничение 3 уровня)
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
 
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &MIInst = *MI++;
+          MachineInstr &MIInst = *MI++; // Безопасный инкремент итератора
 
           if (MIInst.isCall()) {
             MachineFunction *Callee = findCallee(MIInst, MF, MMI);
@@ -47,12 +49,13 @@ public:
               performInline(MBB, MIInst, *Callee);
               LocalChanged = true;
               Changed = true;
-              goto restart_scan;
+              // После модификации блока итераторы MI невалидны, начинаем заново
+              goto restart;
             }
           }
         }
       }
-    restart_scan:
+    restart:
       if (!LocalChanged)
         break;
     }
@@ -64,6 +67,7 @@ private:
   static constexpr unsigned MaxInstrs = 15;
   static constexpr unsigned MaxDepth = 3;
 
+  // Ищем калли через реестр имен, MMI и модуль
   MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
                               MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
@@ -75,10 +79,13 @@ private:
       }
 
       if (!Name.empty()) {
+        // 1. Проверка на рекурсию
         if (Name == Caller.getName())
           return &Caller;
-        if (Registry.count(Name))
-          return Registry[Name];
+        // 2. Поиск в реестре обработанных функций
+        if (FunctionRegistry.count(Name))
+          return FunctionRegistry[Name];
+        // 3. Поиск через MMI и Module
         auto &M = *Caller.getFunction().getParent();
         if (auto *F = M.getFunction(Name)) {
           MachineFunction *MF = MMI.getMachineFunction(*F);
@@ -104,21 +111,24 @@ private:
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
                      MachineFunction &Callee) {
     MachineFunction &Caller = *MBB.getParent();
-    SmallVector<MachineInstr *, 16> ToClone;
+    SmallVector<MachineInstr *, 16> Body;
 
+    // Собираем инструкции тела (без возвратов)
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (CMI.isReturn() || CMI.isTerminator())
           continue;
-        ToClone.push_back(&CMI);
+        Body.push_back(&CMI);
       }
     }
 
-    for (auto *I : ToClone) {
+    // Вставляем клонированные инструкции перед CALL
+    for (auto *I : Body) {
       MachineInstr *Cloned = Caller.CloneMachineInstr(I);
       MBB.insert(CallInst, Cloned);
     }
 
+    // Удаляем сам вызов
     CallInst.eraseFromParent();
   }
 };
