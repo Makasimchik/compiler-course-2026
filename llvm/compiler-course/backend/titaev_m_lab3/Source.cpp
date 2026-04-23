@@ -13,9 +13,8 @@
 using namespace llvm;
 
 namespace {
-// Статический реестр для надежного поиска функций по именам в рамках одного
-// модуля
-static std::map<std::string, MachineFunction *> FunctionRegistry;
+// Глобальный реестр для поиска функций в рамках одного модуля MIR
+static std::map<std::string, MachineFunction *> GlobalRegistry;
 
 class ExamplePass : public MachineFunctionPass {
 public:
@@ -28,9 +27,8 @@ public:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    // Регистрируем функцию в глобальном реестре (позволяет видеть её при
-    // обработке других функций)
-    FunctionRegistry[MF.getName().str()] = &MF;
+    // Сохраняем текущую функцию в реестр, чтобы её могли найти другие
+    GlobalRegistry[MF.getName().str()] = &MF;
 
     bool Changed = false;
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
@@ -41,17 +39,16 @@ public:
 
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &CallMI = *MI++; // Заранее сдвигаем итератор
+          MachineInstr &MIInst = *MI++; // Инкремент итератора до модификации
 
-          if (CallMI.isCall()) {
-            MachineFunction *Callee = findCallee(CallMI, MF, MMI);
+          if (MIInst.isCall()) {
+            MachineFunction *Callee = findCallee(MIInst, MF, MMI);
 
             if (Callee && shouldInline(*Callee)) {
-              performInline(MBB, CallMI, *Callee);
+              performInline(MBB, MIInst, *Callee);
               LocalChanged = true;
               Changed = true;
-              // После модификации блока лучше перезапустить сканирование
-              // функции
+              // После встраивания перезапускаем проверку для текущей глубины
               goto start_over;
             }
           }
@@ -69,30 +66,30 @@ private:
   static constexpr unsigned MaxInstrs = 15;
   static constexpr unsigned MaxDepth = 3;
 
-  // Тщательный поиск вызываемой функции
   MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
                               MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
-      std::string Name = "";
+      StringRef Name;
       if (MO.isGlobal() && MO.getGlobal()) {
-        Name = MO.getGlobal()->getName().str();
+        Name = MO.getGlobal()->getName();
       } else if (MO.isSymbol()) {
         Name = MO.getSymbolName();
       }
 
       if (!Name.empty()) {
-        // 1. Проверяем рекурсию
-        if (Name == Caller.getName())
+        std::string SName = Name.str();
+        // 1. Рекурсия
+        if (SName == Caller.getName())
           return &Caller;
-        // 2. Проверяем реестр (самый надежный способ для lit-тестов)
-        if (FunctionRegistry.count(Name))
-          return FunctionRegistry[Name];
-        // 3. Стандартный поиск через MMI
+        // 2. Поиск в нашем реестре
+        if (GlobalRegistry.count(SName))
+          return GlobalRegistry[SName];
+        // 3. Поиск через MMI
         auto &M = *Caller.getFunction().getParent();
         if (auto *F = M.getFunction(Name)) {
-          MachineFunction *TargetMF = MMI.getMachineFunction(*F);
-          if (TargetMF)
-            return TargetMF;
+          MachineFunction *Target = MMI.getMachineFunction(*F);
+          if (Target)
+            return Target;
         }
       }
     }
@@ -107,7 +104,6 @@ private:
           Count++;
       }
     }
-    // Лимит: функция не пустая и не более 15 инструкций
     return Count > 0 && Count <= MaxInstrs;
   }
 
@@ -116,8 +112,7 @@ private:
     MachineFunction &Caller = *MBB.getParent();
     SmallVector<MachineInstr *, 16> ToClone;
 
-    // Собираем инструкции во временный список (чтобы не испортить итераторы при
-    // рекурсии)
+    // Собираем инструкции во временный список (критично для рекурсии)
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (!CMI.isTerminator()) {
@@ -126,13 +121,12 @@ private:
       }
     }
 
-    // Копируем инструкции в место вызова
     for (auto *I : ToClone) {
       MachineInstr *Cloned = Caller.CloneMachineInstr(I);
       MBB.insert(CallInst, Cloned);
     }
 
-    // Удаляем CALL
+    // Удаляем вызов
     CallInst.eraseFromParent();
   }
 };
