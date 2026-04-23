@@ -13,9 +13,9 @@
 using namespace llvm;
 
 namespace {
-// Статический кэш для хранения указателей на MachineFunction в рамках одного
-// запуска llc
-static std::map<std::string, MachineFunction *> MFCache;
+// Статический реестр для надежного поиска функций по именам в рамках одного
+// модуля
+static std::map<std::string, MachineFunction *> FunctionRegistry;
 
 class ExamplePass : public MachineFunctionPass {
 public:
@@ -28,33 +28,36 @@ public:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    // Сохраняем текущую функцию в кэш, чтобы другие могли её встроить
-    MFCache[MF.getName().str()] = &MF;
+    // Регистрируем функцию в глобальном реестре (позволяет видеть её при
+    // обработке других функций)
+    FunctionRegistry[MF.getName().str()] = &MF;
 
     bool Changed = false;
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
 
+    // Глубина встраивания (3 уровня)
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
 
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &MIInst = *MI++;
+          MachineInstr &CallMI = *MI++; // Заранее сдвигаем итератор
 
-          if (MIInst.isCall()) {
-            MachineFunction *Callee = findCallee(MIInst, MF, MMI);
+          if (CallMI.isCall()) {
+            MachineFunction *Callee = findCallee(CallMI, MF, MMI);
 
             if (Callee && shouldInline(*Callee)) {
-              performInline(MBB, MIInst, *Callee);
+              performInline(MBB, CallMI, *Callee);
               LocalChanged = true;
               Changed = true;
-              // Сбрасываем итераторы для текущей глубины
-              goto restart;
+              // После модификации блока лучше перезапустить сканирование
+              // функции
+              goto start_over;
             }
           }
         }
       }
-    restart:
+    start_over:
       if (!LocalChanged)
         break;
     }
@@ -66,29 +69,31 @@ private:
   static constexpr unsigned MaxInstrs = 15;
   static constexpr unsigned MaxDepth = 3;
 
-  // Улучшенный поиск функции через реестр и MMI
+  // Тщательный поиск вызываемой функции
   MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
                               MachineModuleInfo &MMI) {
-    for (auto &MO : MI.operands()) {
-      StringRef Name;
-      if (MO.isGlobal()) {
-        if (auto *F = dyn_cast<Function>(MO.getGlobal()))
-          Name = F->getName();
+    for (const MachineOperand &MO : MI.operands()) {
+      std::string Name = "";
+      if (MO.isGlobal() && MO.getGlobal()) {
+        Name = MO.getGlobal()->getName().str();
       } else if (MO.isSymbol()) {
         Name = MO.getSymbolName();
       }
 
       if (!Name.empty()) {
-        // 1. Проверяем на рекурсию
+        // 1. Проверяем рекурсию
         if (Name == Caller.getName())
           return &Caller;
-        // 2. Проверяем наш кэш (для функций из того же MIR файла)
-        if (MFCache.count(Name.str()))
-          return MFCache[Name.str()];
-        // 3. Пробуем стандартный MMI
+        // 2. Проверяем реестр (самый надежный способ для lit-тестов)
+        if (FunctionRegistry.count(Name))
+          return FunctionRegistry[Name];
+        // 3. Стандартный поиск через MMI
         auto &M = *Caller.getFunction().getParent();
-        if (auto *F = M.getFunction(Name))
-          return MMI.getMachineFunction(*F);
+        if (auto *F = M.getFunction(Name)) {
+          MachineFunction *TargetMF = MMI.getMachineFunction(*F);
+          if (TargetMF)
+            return TargetMF;
+        }
       }
     }
     return nullptr;
@@ -102,6 +107,7 @@ private:
           Count++;
       }
     }
+    // Лимит: функция не пустая и не более 15 инструкций
     return Count > 0 && Count <= MaxInstrs;
   }
 
@@ -110,19 +116,23 @@ private:
     MachineFunction &Caller = *MBB.getParent();
     SmallVector<MachineInstr *, 16> ToClone;
 
-    // Собираем инструкции во временный список (важно для рекурсии!)
+    // Собираем инструкции во временный список (чтобы не испортить итераторы при
+    // рекурсии)
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
-        if (!CMI.isTerminator())
+        if (!CMI.isTerminator()) {
           ToClone.push_back(&CMI);
+        }
       }
     }
 
+    // Копируем инструкции в место вызова
     for (auto *I : ToClone) {
       MachineInstr *Cloned = Caller.CloneMachineInstr(I);
       MBB.insert(CallInst, Cloned);
     }
 
+    // Удаляем CALL
     CallInst.eraseFromParent();
   }
 };
