@@ -23,33 +23,37 @@ public:
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
-    bool GlobalChanged = false;
+    bool Changed = false;
 
-    // Ограничение глубины рекурсии (3 уровня)
+    // Внешний цикл для соблюдения глубины рекурсии (3 уровня)
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
 
       for (auto &MBB : MF) {
-        for (auto MI = MBB.begin(); MI != MBB.end(); ++MI) {
-          if (MI->isCall()) {
-            MachineFunction *Callee = getCallee(*MI, MF, MMI);
+        for (auto MI = MBB.begin(); MI != MBB.end();) {
+          MachineInstr &MIInst = *MI++; // Заранее инкрементируем итератор
+
+          if (MIInst.isCall()) {
+            MachineFunction *Callee = getCallee(MIInst, MF, MMI);
 
             if (Callee && shouldInline(*Callee)) {
-              performInline(MBB, *MI, *Callee);
+              performInline(MBB, MIInst, *Callee);
               LocalChanged = true;
-              GlobalChanged = true;
-              goto next_iteration;
+              Changed = true;
+              // После встраивания в текущий блок, итераторы MI могут стать
+              // невалидными. Проще всего начать обработку MF заново для этой
+              // глубины.
+              goto start_over;
             }
           }
         }
       }
-
-    next_iteration:
+    start_over:
       if (!LocalChanged)
         break;
     }
 
-    return GlobalChanged;
+    return Changed;
   }
 
 private:
@@ -59,6 +63,7 @@ private:
   MachineFunction *getCallee(MachineInstr &MI, MachineFunction &Caller,
                              MachineModuleInfo &MMI) {
     for (auto &MO : MI.operands()) {
+      // Случай 1: GlobalAddress (ссылка на IR функцию)
       if (MO.isGlobal()) {
         if (auto *F = dyn_cast<Function>(MO.getGlobal())) {
           if (F->getName() == Caller.getName())
@@ -66,13 +71,14 @@ private:
           return MMI.getMachineFunction(*F);
         }
       }
+      // Случай 2: Имя символа (часто встречается в MIR)
       if (MO.isSymbol()) {
-        StringRef Sym = MO.getSymbolName();
-        if (Sym == Caller.getName())
+        StringRef Name = MO.getSymbolName();
+        if (Name == Caller.getName())
           return &Caller;
 
         auto &M = *Caller.getFunction().getParent();
-        if (auto *F = M.getFunction(Sym))
+        if (auto *F = M.getFunction(Name))
           return MMI.getMachineFunction(*F);
       }
     }
@@ -87,27 +93,31 @@ private:
           Count++;
       }
     }
+    // Функция должна содержать полезный код и не превышать лимит инструкций
     return Count > 0 && Count <= MaxInstrs;
   }
 
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
                      MachineFunction &Callee) {
     MachineFunction &Caller = *MBB.getParent();
-    SmallVector<MachineInstr *, 16> InstsToClone;
+    SmallVector<MachineInstr *, 16> ToClone;
 
+    // Собираем все инструкции, кроме терминаторов (RET/JMP)
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
-        if (!CMI.isReturn() && !CMI.isTerminator()) {
-          InstsToClone.push_back(&CMI);
+        if (!CMI.isTerminator()) {
+          ToClone.push_back(&CMI);
         }
       }
     }
 
-    for (auto *Inst : InstsToClone) {
-      MachineInstr *Cloned = Caller.CloneMachineInstr(Inst);
+    // Вставляем клонированные инструкции перед CALL
+    for (auto *I : ToClone) {
+      MachineInstr *Cloned = Caller.CloneMachineInstr(I);
       MBB.insert(CallInst, Cloned);
     }
 
+    // Удаляем оригинальную инструкцию CALL
     CallInst.eraseFromParent();
   }
 };
