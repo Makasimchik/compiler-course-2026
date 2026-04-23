@@ -7,10 +7,16 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/IR/Module.h"
+#include <map>
+#include <string>
 
 using namespace llvm;
 
 namespace {
+// Статический кэш для хранения указателей на MachineFunction в рамках одного
+// запуска llc
+static std::map<std::string, MachineFunction *> MFCache;
+
 class ExamplePass : public MachineFunctionPass {
 public:
   static char ID;
@@ -22,33 +28,33 @@ public:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
-    bool Changed = false;
+    // Сохраняем текущую функцию в кэш, чтобы другие могли её встроить
+    MFCache[MF.getName().str()] = &MF;
 
-    // Внешний цикл для соблюдения глубины рекурсии (3 уровня)
+    bool Changed = false;
+    auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
+
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
 
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &MIInst = *MI++; // Заранее инкрементируем итератор
+          MachineInstr &MIInst = *MI++;
 
           if (MIInst.isCall()) {
-            MachineFunction *Callee = getCallee(MIInst, MF, MMI);
+            MachineFunction *Callee = findCallee(MIInst, MF, MMI);
 
             if (Callee && shouldInline(*Callee)) {
               performInline(MBB, MIInst, *Callee);
               LocalChanged = true;
               Changed = true;
-              // После встраивания в текущий блок, итераторы MI могут стать
-              // невалидными. Проще всего начать обработку MF заново для этой
-              // глубины.
-              goto start_over;
+              // Сбрасываем итераторы для текущей глубины
+              goto restart;
             }
           }
         }
       }
-    start_over:
+    restart:
       if (!LocalChanged)
         break;
     }
@@ -60,23 +66,26 @@ private:
   static constexpr unsigned MaxInstrs = 15;
   static constexpr unsigned MaxDepth = 3;
 
-  MachineFunction *getCallee(MachineInstr &MI, MachineFunction &Caller,
-                             MachineModuleInfo &MMI) {
+  // Улучшенный поиск функции через реестр и MMI
+  MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
+                              MachineModuleInfo &MMI) {
     for (auto &MO : MI.operands()) {
-      // Случай 1: GlobalAddress (ссылка на IR функцию)
+      StringRef Name;
       if (MO.isGlobal()) {
-        if (auto *F = dyn_cast<Function>(MO.getGlobal())) {
-          if (F->getName() == Caller.getName())
-            return &Caller;
-          return MMI.getMachineFunction(*F);
-        }
+        if (auto *F = dyn_cast<Function>(MO.getGlobal()))
+          Name = F->getName();
+      } else if (MO.isSymbol()) {
+        Name = MO.getSymbolName();
       }
-      // Случай 2: Имя символа (часто встречается в MIR)
-      if (MO.isSymbol()) {
-        StringRef Name = MO.getSymbolName();
+
+      if (!Name.empty()) {
+        // 1. Проверяем на рекурсию
         if (Name == Caller.getName())
           return &Caller;
-
+        // 2. Проверяем наш кэш (для функций из того же MIR файла)
+        if (MFCache.count(Name.str()))
+          return MFCache[Name.str()];
+        // 3. Пробуем стандартный MMI
         auto &M = *Caller.getFunction().getParent();
         if (auto *F = M.getFunction(Name))
           return MMI.getMachineFunction(*F);
@@ -93,7 +102,6 @@ private:
           Count++;
       }
     }
-    // Функция должна содержать полезный код и не превышать лимит инструкций
     return Count > 0 && Count <= MaxInstrs;
   }
 
@@ -102,22 +110,19 @@ private:
     MachineFunction &Caller = *MBB.getParent();
     SmallVector<MachineInstr *, 16> ToClone;
 
-    // Собираем все инструкции, кроме терминаторов (RET/JMP)
+    // Собираем инструкции во временный список (важно для рекурсии!)
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
-        if (!CMI.isTerminator()) {
+        if (!CMI.isTerminator())
           ToClone.push_back(&CMI);
-        }
       }
     }
 
-    // Вставляем клонированные инструкции перед CALL
     for (auto *I : ToClone) {
       MachineInstr *Cloned = Caller.CloneMachineInstr(I);
       MBB.insert(CallInst, Cloned);
     }
 
-    // Удаляем оригинальную инструкцию CALL
     CallInst.eraseFromParent();
   }
 };
