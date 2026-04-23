@@ -13,8 +13,7 @@
 using namespace llvm;
 
 namespace {
-// Глобальный реестр для поиска функций в рамках одного модуля MIR
-static std::map<std::string, MachineFunction *> GlobalRegistry;
+static std::map<std::string, MachineFunction *> Registry;
 
 class ExamplePass : public MachineFunctionPass {
 public:
@@ -27,19 +26,19 @@ public:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    // Сохраняем текущую функцию в реестр, чтобы её могли найти другие
-    GlobalRegistry[MF.getName().str()] = &MF;
+    // Сохраняем текущую функцию в реестр
+    std::string MFName = MF.getName().str();
+    Registry[MFName] = &MF;
 
     bool Changed = false;
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
 
-    // Глубина встраивания (3 уровня)
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
 
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &MIInst = *MI++; // Инкремент итератора до модификации
+          MachineInstr &MIInst = *MI++;
 
           if (MIInst.isCall()) {
             MachineFunction *Callee = findCallee(MIInst, MF, MMI);
@@ -48,13 +47,12 @@ public:
               performInline(MBB, MIInst, *Callee);
               LocalChanged = true;
               Changed = true;
-              // После встраивания перезапускаем проверку для текущей глубины
-              goto start_over;
+              goto restart_scan;
             }
           }
         }
       }
-    start_over:
+    restart_scan:
       if (!LocalChanged)
         break;
     }
@@ -69,27 +67,23 @@ private:
   MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
                               MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
-      StringRef Name;
+      std::string Name = "";
       if (MO.isGlobal() && MO.getGlobal()) {
-        Name = MO.getGlobal()->getName();
+        Name = MO.getGlobal()->getName().str();
       } else if (MO.isSymbol()) {
         Name = MO.getSymbolName();
       }
 
       if (!Name.empty()) {
-        std::string SName = Name.str();
-        // 1. Рекурсия
-        if (SName == Caller.getName())
+        if (Name == Caller.getName())
           return &Caller;
-        // 2. Поиск в нашем реестре
-        if (GlobalRegistry.count(SName))
-          return GlobalRegistry[SName];
-        // 3. Поиск через MMI
+        if (Registry.count(Name))
+          return Registry[Name];
         auto &M = *Caller.getFunction().getParent();
         if (auto *F = M.getFunction(Name)) {
-          MachineFunction *Target = MMI.getMachineFunction(*F);
-          if (Target)
-            return Target;
+          MachineFunction *MF = MMI.getMachineFunction(*F);
+          if (MF)
+            return MF;
         }
       }
     }
@@ -112,12 +106,11 @@ private:
     MachineFunction &Caller = *MBB.getParent();
     SmallVector<MachineInstr *, 16> ToClone;
 
-    // Собираем инструкции во временный список (критично для рекурсии)
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
-        if (!CMI.isTerminator()) {
-          ToClone.push_back(&CMI);
-        }
+        if (CMI.isReturn() || CMI.isTerminator())
+          continue;
+        ToClone.push_back(&CMI);
       }
     }
 
@@ -126,7 +119,6 @@ private:
       MBB.insert(CallInst, Cloned);
     }
 
-    // Удаляем вызов
     CallInst.eraseFromParent();
   }
 };

@@ -26,7 +26,10 @@ body:             |
     RET64
 ---
 # CHECK-LABEL: name: recursive_func
-# CHECK-COUNT-4: $edi = MOV32ri 7
+# CHECK: $edi = MOV32ri 7
+# CHECK: $edi = MOV32ri 7
+# CHECK: $edi = MOV32ri 7
+# CHECK: $edi = MOV32ri 7
 # CHECK: CALL64pcrel32 @recursive_func
 name:            recursive_func
 body:             |
