@@ -25,32 +25,26 @@ public:
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
     bool GlobalChanged = false;
 
+    // Ограничение глубины рекурсии (3 уровня)
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
-      SmallVector<MachineInstr *, 8> CallsToInline;
 
-      // 1. Сначала находим все вызовы, которые подходят под условия
       for (auto &MBB : MF) {
-        for (auto &MI : MBB) {
-          if (MI.isCall()) {
-            MachineFunction *Callee = getCallee(MI, MF, MMI);
+        for (auto MI = MBB.begin(); MI != MBB.end(); ++MI) {
+          if (MI->isCall()) {
+            MachineFunction *Callee = getCallee(*MI, MF, MMI);
+
             if (Callee && shouldInline(*Callee)) {
-              CallsToInline.push_back(&MI);
+              performInline(MBB, *MI, *Callee);
+              LocalChanged = true;
+              GlobalChanged = true;
+              goto next_iteration;
             }
           }
         }
       }
 
-      // 2. Встраиваем найденные вызовы
-      for (MachineInstr *CI : CallsToInline) {
-        MachineFunction *Callee = getCallee(*CI, MF, MMI);
-        if (Callee) {
-          performInline(*CI->getParent(), *CI, *Callee);
-          LocalChanged = true;
-          GlobalChanged = true;
-        }
-      }
-
+    next_iteration:
       if (!LocalChanged)
         break;
     }
@@ -66,11 +60,17 @@ private:
                              MachineModuleInfo &MMI) {
     for (auto &MO : MI.operands()) {
       if (MO.isGlobal()) {
-        if (auto *F = dyn_cast<Function>(MO.getGlobal()))
+        if (auto *F = dyn_cast<Function>(MO.getGlobal())) {
+          if (F->getName() == Caller.getName())
+            return &Caller;
           return MMI.getMachineFunction(*F);
+        }
       }
       if (MO.isSymbol()) {
-        const char *Sym = MO.getSymbolName();
+        StringRef Sym = MO.getSymbolName();
+        if (Sym == Caller.getName())
+          return &Caller;
+
         auto &M = *Caller.getFunction().getParent();
         if (auto *F = M.getFunction(Sym))
           return MMI.getMachineFunction(*F);
@@ -95,8 +95,6 @@ private:
     MachineFunction &Caller = *MBB.getParent();
     SmallVector<MachineInstr *, 16> InstsToClone;
 
-    // Сначала собираем инструкции в список, чтобы избежать проблем
-    // при само-встраивании (рекурсии)
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (!CMI.isReturn() && !CMI.isTerminator()) {
