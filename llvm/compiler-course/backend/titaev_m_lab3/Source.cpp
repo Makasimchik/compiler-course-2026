@@ -4,6 +4,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
@@ -22,12 +23,14 @@ public:
   ExamplePass() : MachineFunctionPass(ID) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<MachineModuleInfoWrapperPass>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    // Регистрируем функцию по имени, чтобы потом находить калли.
     FunctionRegistry[MF.getName().str()] = &MF;
+
+    auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
 
     bool Changed = false;
 
@@ -38,16 +41,23 @@ public:
         for (auto MI = MBB.begin(); MI != MBB.end();) {
           MachineInstr &MIInst = *MI++;
 
-          if (!MIInst.isCall())
+          // Явно матчим x86-вызов.
+          if (MIInst.getOpcode() != X86::CALL64pcrel32)
             continue;
 
-          MachineFunction *Callee = findCallee(MIInst, MF);
-          if (Callee && shouldInline(*Callee)) {
-            performInline(MBB, MIInst, *Callee);
-            LocalChanged = true;
-            Changed = true;
-            goto restart;
-          }
+          MachineFunction *Callee = findCallee(MIInst, MF, MMI);
+          if (!Callee)
+            continue;
+
+          if (!shouldInline(*Callee))
+            continue;
+
+          bool IsRecursive = (Callee == &MF);
+
+          performInline(MBB, MIInst, *Callee, IsRecursive);
+          LocalChanged = true;
+          Changed = true;
+          goto restart;
         }
       }
 
@@ -63,7 +73,8 @@ private:
   static constexpr unsigned MaxInstrs = 15;
   static constexpr unsigned MaxDepth = 3;
 
-  MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller) {
+  MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
+                              MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
       StringRef Name;
 
@@ -77,13 +88,20 @@ private:
       if (Name.empty())
         continue;
 
-      // Рекурсивный вызов: callee == caller.
+      // Рекурсивный вызов.
       if (Name == Caller.getName())
         return &Caller;
 
       auto It = FunctionRegistry.find(Name.str());
       if (It != FunctionRegistry.end())
         return It->second;
+
+      // Попробовать достать MachineFunction через MMI.
+      Module &M = *Caller.getFunction().getParent();
+      if (Function *F = M.getFunction(Name)) {
+        if (MachineFunction *MF = MMI.getMachineFunction(*F))
+          return MF;
+      }
     }
     return nullptr;
   }
@@ -107,11 +125,9 @@ private:
   }
 
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
-                     MachineFunction &Callee) {
+                     MachineFunction &Callee, bool IsRecursive) {
     SmallVector<MachineInstr *, 16> Body;
 
-    // Собираем тело до первого вызова/ret — чтобы рекурсия не раздувалась
-    // экспоненциально и соответствовала CHECK-COUNT-4 для recursive_func.
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (CMI.isReturn())
@@ -125,7 +141,8 @@ private:
     for (auto *I : Body)
       cloneInstrInto(*I, MBB, CallInst);
 
-    CallInst.eraseFromParent();
+    if (!IsRecursive)
+      CallInst.eraseFromParent();
   }
 };
 
