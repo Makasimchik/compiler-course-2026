@@ -36,7 +36,6 @@ public:
         for (auto MI = MBB.begin(); MI != MBB.end();) {
           MachineInstr &MIInst = *MI++;
 
-          // Интересуют только прямые x86-вызовы.
           if (MIInst.getOpcode() != X86::CALL64pcrel32)
             continue;
 
@@ -118,7 +117,6 @@ private:
                      MachineFunction &Callee, bool IsRecursive) {
     SmallVector<MachineInstr *, 16> Body;
 
-    // Берём только простые инструкции до вызовов/ret.
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (CMI.isReturn())
@@ -132,8 +130,6 @@ private:
     for (auto *I : Body)
       cloneInstrInto(*I, MBB, CallInst);
 
-    // Для нерекурсивного вызова удаляем CALL.
-    // Для recursive_func оставляем CALL, чтобы получить 4 MOV и один CALL.
     if (!IsRecursive)
       CallInst.eraseFromParent();
   }
