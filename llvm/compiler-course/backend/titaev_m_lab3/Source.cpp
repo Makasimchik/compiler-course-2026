@@ -27,12 +27,15 @@ public:
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
     bool Changed = false;
 
+    // Проход по глубине для обработки вложенного инлайнинга
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
+
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
           MachineInstr &MIInst = *MI++;
 
+          // Ищем только X86 вызовы
           if (MIInst.getOpcode() != X86::CALL64pcrel32)
             continue;
 
@@ -43,13 +46,16 @@ public:
           performInline(MBB, MIInst, *Callee);
           LocalChanged = true;
           Changed = true;
-          goto restart_function;
+
+          // Безопасный выход из циклов для перезапуска поиска в измененной MF
+          goto restart;
         }
       }
-    restart_function:
+    restart:
       if (!LocalChanged)
         break;
     }
+
     return Changed;
   }
 
@@ -61,23 +67,26 @@ private:
                               MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
       StringRef Name;
-      if (MO.isGlobal())
+      if (MO.isGlobal() && MO.getGlobal()) {
         Name = MO.getGlobal()->getName();
-      else if (MO.isSymbol())
+      } else if (MO.isSymbol()) {
         Name = MO.getSymbolName();
-      else
+      } else {
         continue;
+      }
 
       if (Name.empty())
         continue;
+
+      // Обработка рекурсии
       if (Name == Caller.getName())
         return &Caller;
 
-      // Пытаемся найти через MMI (самый надежный способ в Backend)
-      if (const Function *F =
-              Caller.getFunction().getParent()->getFunction(Name)) {
-        if (MachineFunction *MF = MMI.getMachineFunction(*F))
-          return MF;
+      // Поиск MachineFunction в модуле через MMI
+      const Module *M = Caller.getFunction().getParent();
+      if (const Function *F = M->getFunction(Name)) {
+        if (MachineFunction *TargetMF = MMI.getMachineFunction(*F))
+          return TargetMF;
       }
     }
     return nullptr;
@@ -85,10 +94,17 @@ private:
 
   bool shouldInline(MachineFunction &Callee) {
     unsigned Count = 0;
-    for (auto &MBB : Callee)
-      Count += MBB.size();
-    // 1 инструкция возврата + само тело.
-    return Count > 1 && Count <= MaxInstrs;
+    for (auto &MBB : Callee) {
+      for (auto &MI : MBB) {
+        // Не считаем возвраты и служебные инструкции
+        if (MI.isReturn() || MI.isTerminator() || MI.isImplicitDef() ||
+            MI.isDebugInstr())
+          continue;
+        Count++;
+      }
+    }
+    // ВАЖНО: Count > 0, так как функции могут быть очень короткими
+    return Count > 0 && Count <= MaxInstrs;
   }
 
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
@@ -105,13 +121,13 @@ private:
       }
     }
 
+    // Вставка тела функции перед инструкцией вызова
     for (auto *I : Body) {
       MachineInstr *Cloned = CallerMF.CloneMachineInstr(I);
       MBB.insert(CallInst, Cloned);
     }
 
-    // В случае рекурсии мы не удаляем вызов, чтобы не уйти в бесконечный цикл,
-    // а просто разворачиваем тело перед ним. Для обычной функции - удаляем.
+    // Если это не рекурсия, удаляем сам вызов
     if (!IsRecursive) {
       CallInst.eraseFromParent();
     }

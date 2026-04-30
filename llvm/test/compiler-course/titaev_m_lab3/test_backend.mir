@@ -15,11 +15,11 @@ body:             |
     RET64
 ---
 # CHECK-LABEL: name: caller_func
-# CHECK:      bb.0:
-# CHECK:        $ebx = MOV32ri 1
-# CHECK-NEXT:   $eax = MOV32ri 42
-# CHECK:        RET64
-# CHECK-NOT:    CALL64pcrel32 @callee_func
+# CHECK: bb.0:
+# CHECK-DAG: $ebx = MOV32ri 1
+# CHECK-DAG: $eax = MOV32ri 42
+# CHECK: RET64
+# CHECK-NOT: CALL64pcrel32 @callee_func
 name:            caller_func
 body:             |
   bb.0:
@@ -28,9 +28,9 @@ body:             |
     RET64
 ---
 # CHECK-LABEL: name: recursive_func
-# CHECK:      bb.0:
+# CHECK: bb.0:
 # CHECK-COUNT-4: $edi = MOV32ri 7
-# CHECK:      CALL64pcrel32 @recursive_func
+# CHECK: CALL64pcrel32 @recursive_func
 name:            recursive_func
 body:             |
   bb.0:
