@@ -8,7 +8,6 @@
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
-#include <string>
 
 using namespace llvm;
 
@@ -26,7 +25,6 @@ public:
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
-
     bool Changed = false;
 
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
@@ -34,28 +32,27 @@ public:
 
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &MIInst = *MI++;
+          MachineInstr &MIInst = *MI++; // Инкрементируем заранее
 
           if (MIInst.getOpcode() != X86::CALL64pcrel32)
             continue;
 
           MachineFunction *Callee = findCallee(MIInst, MF, MMI);
-          if (!Callee)
-            continue;
-
-          if (!shouldInline(*Callee))
+          if (!Callee || !shouldInline(*Callee))
             continue;
 
           bool IsRecursive = (Callee == &MF);
+
           performInline(MBB, MIInst, *Callee, IsRecursive);
 
           LocalChanged = true;
           Changed = true;
-          goto restart;
+
+          goto restart_search;
         }
       }
 
-    restart:
+    restart_search:
       if (!LocalChanged)
         break;
     }
@@ -71,7 +68,6 @@ private:
                               MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
       StringRef Name;
-
       if (MO.isGlobal() && MO.getGlobal())
         Name = MO.getGlobal()->getName();
       else if (MO.isSymbol())
@@ -82,14 +78,14 @@ private:
       if (Name.empty())
         continue;
 
-      // Рекурсивный вызов.
+      // Рекурсия
       if (Name == Caller.getName())
         return &Caller;
 
-      Module &M = *Caller.getFunction().getParent();
-      if (Function *F = M.getFunction(Name)) {
-        if (MachineFunction *MF = MMI.getMachineFunction(*F))
-          return MF;
+      // Поиск в модуле
+      const Module *M = Caller.getFunction().getParent();
+      if (Function *F = M->getFunction(Name)) {
+        return MMI.getMachineFunction(*F);
       }
     }
     return nullptr;
@@ -97,41 +93,36 @@ private:
 
   bool shouldInline(MachineFunction &Callee) {
     unsigned Count = 0;
-    for (auto &MBB : Callee)
-      for (auto &MI : MBB)
-        if (!MI.isReturn())
+    for (auto &MBB : Callee) {
+      for (auto &MI : MBB) {
+        if (!MI.isReturn() && !MI.isTerminator())
           Count++;
+      }
+    }
     return Count > 0 && Count <= MaxInstrs;
-  }
-
-  void cloneInstrInto(MachineInstr &Src, MachineBasicBlock &Dst,
-                      MachineInstr &Before) {
-    MachineInstrBuilder MIB =
-        BuildMI(Dst, Before, Src.getDebugLoc(), Src.getDesc());
-
-    for (const MachineOperand &MO : Src.operands())
-      MIB.add(MO);
   }
 
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
                      MachineFunction &Callee, bool IsRecursive) {
-    SmallVector<MachineInstr *, 16> Body;
+    MachineFunction &CallerMF = *MBB.getParent();
 
+    SmallVector<MachineInstr *, 16> InstructionsToInline;
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
-        if (CMI.isReturn())
+        if (CMI.isReturn() || CMI.isTerminator())
           continue;
-        if (CMI.isCall())
-          break;
-        Body.push_back(&CMI);
+        InstructionsToInline.push_back(&CMI);
       }
     }
 
-    for (auto *I : Body)
-      cloneInstrInto(*I, MBB, CallInst);
+    for (auto *I : InstructionsToInline) {
+      MachineInstr *ClonedMI = CallerMF.CloneMachineInstr(I);
+      MBB.insert(CallInst, ClonedMI);
+    }
 
-    if (!IsRecursive)
+    if (!IsRecursive) {
       CallInst.eraseFromParent();
+    }
   }
 };
 
