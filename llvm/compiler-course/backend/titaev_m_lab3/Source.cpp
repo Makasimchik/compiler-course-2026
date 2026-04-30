@@ -19,11 +19,13 @@ public:
   ExamplePass() : MachineFunctionPass(ID) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    // Явно указываем, что нам нужен MachineModuleInfo
     AU.addRequired<MachineModuleInfoWrapperPass>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
+    auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
     bool Changed = false;
 
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
@@ -36,7 +38,8 @@ public:
           if (CallInst.getOpcode() != X86::CALL64pcrel32)
             continue;
 
-          MachineFunction *Callee = findCallee(CallInst, MF);
+          // Передаем MMI в функцию поиска
+          MachineFunction *Callee = findCallee(CallInst, MF, MMI);
           if (!Callee || !shouldInline(*Callee))
             continue;
 
@@ -61,7 +64,8 @@ private:
   static constexpr unsigned MaxInstrs = 20;
   static constexpr unsigned MaxDepth = 3;
 
-  MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller) {
+  MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
+                              MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
       const Function *F = nullptr;
 
@@ -77,8 +81,8 @@ private:
       if (F->getName() == Caller.getName())
         return &Caller;
 
-      if (MachineFunction *MF = Caller.getMMI().getMachineFunction(*F))
-        return MF;
+      if (MachineFunction *TargetMF = MMI.getMachineFunction(*F))
+        return TargetMF;
     }
     return nullptr;
   }
