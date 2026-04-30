@@ -19,7 +19,6 @@ public:
   ExamplePass() : MachineFunctionPass(ID) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    // Явно указываем, что нам нужен MachineModuleInfo
     AU.addRequired<MachineModuleInfoWrapperPass>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
@@ -30,25 +29,20 @@ public:
 
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
-
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &CallInst = *MI++;
+          MachineInstr &MIInst = *MI++;
 
-          if (CallInst.getOpcode() != X86::CALL64pcrel32)
+          if (MIInst.getOpcode() != X86::CALL64pcrel32)
             continue;
 
-          // Передаем MMI в функцию поиска
-          MachineFunction *Callee = findCallee(CallInst, MF, MMI);
+          MachineFunction *Callee = findCallee(MIInst, MF, MMI);
           if (!Callee || !shouldInline(*Callee))
             continue;
 
-          bool IsRecursive = (Callee == &MF);
-          performInline(MBB, CallInst, *Callee, IsRecursive);
-
+          performInline(MBB, MIInst, *Callee);
           LocalChanged = true;
           Changed = true;
-
           goto restart_function;
         }
       }
@@ -56,53 +50,53 @@ public:
       if (!LocalChanged)
         break;
     }
-
     return Changed;
   }
 
 private:
-  static constexpr unsigned MaxInstrs = 20;
+  static constexpr unsigned MaxInstrs = 25;
   static constexpr unsigned MaxDepth = 3;
 
   MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
                               MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
-      const Function *F = nullptr;
-
-      if (MO.isGlobal()) {
-        F = dyn_cast_or_null<Function>(MO.getGlobal());
-      } else if (MO.isSymbol()) {
-        F = Caller.getFunction().getParent()->getFunction(MO.getSymbolName());
-      }
-
-      if (!F)
+      StringRef Name;
+      if (MO.isGlobal())
+        Name = MO.getGlobal()->getName();
+      else if (MO.isSymbol())
+        Name = MO.getSymbolName();
+      else
         continue;
 
-      if (F->getName() == Caller.getName())
+      if (Name.empty())
+        continue;
+      if (Name == Caller.getName())
         return &Caller;
 
-      if (MachineFunction *TargetMF = MMI.getMachineFunction(*F))
-        return TargetMF;
+      // Пытаемся найти через MMI (самый надежный способ в Backend)
+      if (const Function *F =
+              Caller.getFunction().getParent()->getFunction(Name)) {
+        if (MachineFunction *MF = MMI.getMachineFunction(*F))
+          return MF;
+      }
     }
     return nullptr;
   }
 
   bool shouldInline(MachineFunction &Callee) {
     unsigned Count = 0;
-    for (auto &MBB : Callee) {
-      for (auto &MI : MBB) {
-        if (!MI.isReturn() && !MI.isTerminator())
-          Count++;
-      }
-    }
-    return Count > 0 && Count <= MaxInstrs;
+    for (auto &MBB : Callee)
+      Count += MBB.size();
+    // 1 инструкция возврата + само тело.
+    return Count > 1 && Count <= MaxInstrs;
   }
 
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
-                     MachineFunction &Callee, bool IsRecursive) {
+                     MachineFunction &Callee) {
     MachineFunction &CallerMF = *MBB.getParent();
-    SmallVector<MachineInstr *, 16> Body;
+    bool IsRecursive = (&Callee == &CallerMF);
 
+    SmallVector<MachineInstr *, 16> Body;
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (CMI.isReturn() || CMI.isTerminator())
@@ -116,6 +110,8 @@ private:
       MBB.insert(CallInst, Cloned);
     }
 
+    // В случае рекурсии мы не удаляем вызов, чтобы не уйти в бесконечный цикл,
+    // а просто разворачиваем тело перед ним. Для обычной функции - удаляем.
     if (!IsRecursive) {
       CallInst.eraseFromParent();
     }

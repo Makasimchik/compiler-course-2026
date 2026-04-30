@@ -36,4 +36,42 @@ body:             |
   bb.0:
     $edi = MOV32ri 7
     CALL64pcrel32 @recursive_func, implicit $rsp, implicit $ssp, implicit-def $rsp, implicit-def $ssp
+    RET64# RUN: llc -mtriple x86_64-unknown-linux-gnu \
+# RUN: -load=%llvmshlibdir/titaev_m_lab3_BACKEND%shlibext \
+# RUN: -run-pass=example-x86 %s -o - | FileCheck %s
+
+--- |
+  define void @callee_func() { ret void }
+  define void @caller_func() { ret void }
+  define void @recursive_func() { ret void }
+...
+---
+name:            callee_func
+body:             |
+  bb.0:
+    $eax = MOV32ri 42
+    RET64
+---
+# CHECK-LABEL: name: caller_func
+# CHECK:      bb.0:
+# CHECK:        $ebx = MOV32ri 1
+# CHECK-NEXT:   $eax = MOV32ri 42
+# CHECK:        RET64
+# CHECK-NOT:    CALL64pcrel32 @callee_func
+name:            caller_func
+body:             |
+  bb.0:
+    $ebx = MOV32ri 1
+    CALL64pcrel32 @callee_func, implicit $rsp, implicit $ssp, implicit-def $rsp, implicit-def $ssp
+    RET64
+---
+# CHECK-LABEL: name: recursive_func
+# CHECK:      bb.0:
+# CHECK-COUNT-4: $edi = MOV32ri 7
+# CHECK:      CALL64pcrel32 @recursive_func
+name:            recursive_func
+body:             |
+  bb.0:
+    $edi = MOV32ri 7
+    CALL64pcrel32 @recursive_func, implicit $rsp, implicit $ssp, implicit-def $rsp, implicit-def $ssp
     RET64
