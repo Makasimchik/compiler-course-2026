@@ -16,7 +16,7 @@ body:             |
 ---
 # CHECK-LABEL: name: caller_func
 # CHECK:      bb.0:
-# CHECK-NEXT:   $ebx = MOV32ri 1
+# CHECK:        $ebx = MOV32ri 1
 # CHECK-NEXT:   $eax = MOV32ri 42
 # CHECK-NEXT:   RET64
 # CHECK-NOT:    CALL64pcrel32 @callee_func
