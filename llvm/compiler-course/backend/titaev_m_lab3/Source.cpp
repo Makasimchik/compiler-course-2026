@@ -6,7 +6,6 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
-#include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -25,35 +24,32 @@ public:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    auto &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
     bool Changed = false;
 
-    // Глубина инлайнинга для обработки рекурсии и вложенности
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
 
       for (auto &MBB : MF) {
         for (auto MI = MBB.begin(); MI != MBB.end();) {
-          MachineInstr &MIInst = *MI++;
+          MachineInstr &CallInst = *MI++;
 
-          if (MIInst.getOpcode() != X86::CALL64pcrel32)
+          if (CallInst.getOpcode() != X86::CALL64pcrel32)
             continue;
 
-          MachineFunction *Callee = findCallee(MIInst, MF, MMI);
+          MachineFunction *Callee = findCallee(CallInst, MF);
           if (!Callee || !shouldInline(*Callee))
             continue;
 
           bool IsRecursive = (Callee == &MF);
-          performInline(MBB, MIInst, *Callee, IsRecursive);
+          performInline(MBB, CallInst, *Callee, IsRecursive);
 
           LocalChanged = true;
           Changed = true;
 
-          // Перезапускаем поиск в текущей функции, так как структура изменилась
-          goto restart;
+          goto restart_function;
         }
       }
-    restart:
+    restart_function:
       if (!LocalChanged)
         break;
     }
@@ -62,33 +58,27 @@ public:
   }
 
 private:
-  static constexpr unsigned MaxInstrs = 15;
+  static constexpr unsigned MaxInstrs = 20;
   static constexpr unsigned MaxDepth = 3;
 
-  MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
-                              MachineModuleInfo &MMI) {
+  MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller) {
     for (const MachineOperand &MO : MI.operands()) {
-      // 1. Попытка найти через GlobalAddress (самый частый случай для CALL)
-      if (MO.isGlobal()) {
-        if (auto *F = dyn_cast_or_null<Function>(MO.getGlobal())) {
-          if (F->getName() == Caller.getName())
-            return &Caller;
-          if (auto *TargetMF = MMI.getMachineFunction(*F))
-            return TargetMF;
-        }
-      }
-      // 2. Попытка найти через имя символа (если это ExternalSymbol)
-      if (MO.isSymbol()) {
-        StringRef Name = MO.getSymbolName();
-        if (Name == Caller.getName())
-          return &Caller;
+      const Function *F = nullptr;
 
-        Module &M = const_cast<Module &>(*Caller.getFunction().getParent());
-        if (auto *F = M.getFunction(Name)) {
-          if (auto *TargetMF = MMI.getMachineFunction(*F))
-            return TargetMF;
-        }
+      if (MO.isGlobal()) {
+        F = dyn_cast_or_null<Function>(MO.getGlobal());
+      } else if (MO.isSymbol()) {
+        F = Caller.getFunction().getParent()->getFunction(MO.getSymbolName());
       }
+
+      if (!F)
+        continue;
+
+      if (F->getName() == Caller.getName())
+        return &Caller;
+
+      if (MachineFunction *MF = Caller.getMMI().getMachineFunction(*F))
+        return MF;
     }
     return nullptr;
   }
@@ -107,24 +97,21 @@ private:
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
                      MachineFunction &Callee, bool IsRecursive) {
     MachineFunction &CallerMF = *MBB.getParent();
-    SmallVector<MachineInstr *, 16> ToInline;
+    SmallVector<MachineInstr *, 16> Body;
 
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (CMI.isReturn() || CMI.isTerminator())
           continue;
-        ToInline.push_back(&CMI);
+        Body.push_back(&CMI);
       }
     }
 
-    // Вставляем инструкции ПЕРЕД вызовом
-    for (auto *I : ToInline) {
+    for (auto *I : Body) {
       MachineInstr *Cloned = CallerMF.CloneMachineInstr(I);
       MBB.insert(CallInst, Cloned);
     }
 
-    // Удаляем вызов, если это не рекурсия (в рекурсии мы просто развернули тело
-    // N раз)
     if (!IsRecursive) {
       CallInst.eraseFromParent();
     }
