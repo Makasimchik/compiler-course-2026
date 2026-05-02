@@ -1,44 +1,56 @@
-; RUN: opt -load-pass-plugin %llvmshlibdir/titaev_m_lab2_LLVM_IR%pluginext \
-; RUN: -passes=titaev-m-expand-rem -S %s | FileCheck %s
+; RUN: opt -load-pass-plugin %llvmshlibdir/RemDecompositionPlugin%pluginext \
+; RUN: -passes=decompose-remainder -S %s | FileCheck %s
 
-; CHECK-LABEL: @test_frem
-; CHECK-NOT: frem
-; CHECK: %titaev.f.div = fdiv float %a, %b
-; CHECK: %titaev.f.trunc = call float @llvm.trunc.f32(float %titaev.f.div)
-; CHECK: %titaev.f.mul = fmul float %titaev.f.trunc, %b
-; CHECK: %titaev.f.res = fsub float %a, %titaev.f.mul
-define float @test_frem(float %a, float %b) {
-  %res = frem float %a, %b
+; Тест 1: Проверка знакового деления на 16-битном целом числе
+; CHECK-LABEL: @process_signed_i16
+; CHECK-NEXT: [[DIV:%[a-z0-9.]+]] = sdiv i16 %val1, %val2
+; CHECK-NEXT: [[MUL:%[a-z0-9.]+]] = mul i16 [[DIV]], %val2
+; CHECK-NEXT: [[RES:%[a-z0-9.]+]] = sub i16 %val1, [[MUL]]
+; CHECK-NEXT: ret i16 [[RES]]
+define i16 @process_signed_i16(i16 %val1, i16 %val2) {
+  %rem = srem i16 %val1, %val2
+  ret i16 %rem
+}
+
+; Тест 2: Проверка беззнакового деления на 64-битном числе
+; CHECK-LABEL: @process_unsigned_i64
+; CHECK: [[UDIV:%.+]] = udiv i64 %input_a, %input_b
+; CHECK: [[UMUL:%.+]] = mul i64 [[UDIV]], %input_b
+; CHECK: [[URES:%.+]] = sub i64 %input_a, [[UMUL]]
+define i64 @process_unsigned_i64(i64 %input_a, i64 %input_b) {
+  %result = urem i64 %input_a, %input_b
+  ret i64 %result
+}
+
+; Тест 3: Работа с плавающей точкой двойной точности (double)
+; CHECK-LABEL: @frem_double_precision
+; CHECK: [[FDIV:%.+]] = fdiv double %a, %b
+; CHECK: [[TRUNC:%.+]] = call double @llvm.trunc.f64(double [[FDIV]])
+; CHECK: [[FMUL:%.+]] = fmul double [[TRUNC]], %b
+; CHECK: [[FREM:%.+]] = fsub double %a, [[FMUL]]
+define double @frem_double_precision(double %a, double %b) {
+  %res = frem double %a, %b
+  ret double %res
+}
+
+; Тест 4: Работа с векторами другого размера (<4 x float>)
+; CHECK-LABEL: @vector_simd_4x
+; CHECK: [[VDIV:%.+]] = fdiv <4 x float> %v1, %v2
+; CHECK: [[VTRUNC:%.+]] = call <4 x float> @llvm.trunc.v4f32(<4 x float> [[VDIV]])
+; CHECK: [[VMUL:%.+]] = fmul <4 x float> [[VTRUNC]], %v2
+; CHECK: [[VRES:%.+]] = fsub <4 x float> %v1, [[VMUL]]
+define <4 x float> @vector_simd_4x(<4 x float> %v1, <4 x float> %v2) {
+  %vrem = frem <4 x float> %v1, %v2
+  ret <4 x float> %vrem
+}
+
+; Тест 5: Комбинированный случай, чтобы показать, что пасс не портит остальной код
+; CHECK-LABEL: @mixed_math
+; CHECK: %sum = fadd float %x, 1.0
+; CHECK: %fdiv = fdiv float %sum, %y
+; CHECK: %ext.f.rem = fsub float %sum,
+define float @mixed_math(float %x, float %y) {
+  %sum = fadd float %x, 1.0
+  %res = frem float %sum, %y
   ret float %res
-}
-
-; CHECK-LABEL: @test_srem
-; CHECK-NOT: srem
-; CHECK: %titaev.s.div = sdiv i32 %a, %b
-; CHECK: %titaev.s.mul = mul i32 %titaev.s.div, %b
-; CHECK: %titaev.s.res = sub i32 %a, %titaev.s.mul
-define i32 @test_srem(i32 %a, i32 %b) {
-  %res = srem i32 %a, %b
-  ret i32 %res
-}
-
-; CHECK-LABEL: @test_urem
-; CHECK-NOT: urem
-; CHECK: %titaev.u.div = udiv i64 %a, %b
-; CHECK: %titaev.u.mul = mul i64 %titaev.u.div, %b
-; CHECK: %titaev.u.res = sub i64 %a, %titaev.u.mul
-define i64 @test_urem(i64 %a, i64 %b) {
-  %res = urem i64 %a, %b
-  ret i64 %res
-}
-
-; CHECK-LABEL: @test_vector
-; CHECK-NOT: frem
-; CHECK: %titaev.f.div = fdiv <2 x float> %a, %b
-; CHECK: %titaev.f.trunc = call <2 x float> @llvm.trunc.v2f32(<2 x float> %titaev.f.div)
-; CHECK: %titaev.f.mul = fmul <2 x float> %titaev.f.trunc, %b
-; CHECK: %titaev.f.res = fsub <2 x float> %a, %titaev.f.mul
-define <2 x float> @test_vector(<2 x float> %a, <2 x float> %b) {
-  %res = frem <2 x float> %a, %b
-  ret <2 x float> %res
 }

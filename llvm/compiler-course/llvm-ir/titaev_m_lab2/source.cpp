@@ -1,6 +1,6 @@
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
@@ -9,64 +9,73 @@ using namespace llvm;
 
 namespace {
 
-struct TitaevMRemainderExpansion
-    : public PassInfoMixin<TitaevMRemainderExpansion> {
-
-  Value *transformRem(Instruction *Inst) {
-    IRBuilder<> Builder(Inst);
-    Value *OpL = Inst->getOperand(0);
-    Value *OpR = Inst->getOperand(1);
-    unsigned OpCode = Inst->getOpcode();
-
-    if (OpCode == Instruction::SRem) {
-      Value *DivS = Builder.CreateSDiv(OpL, OpR, "titaev.s.div");
-      Value *MulS = Builder.CreateMul(DivS, OpR, "titaev.s.mul");
-      return Builder.CreateSub(OpL, MulS, "titaev.s.res");
-    }
-
-    if (OpCode == Instruction::URem) {
-      Value *DivU = Builder.CreateUDiv(OpL, OpR, "titaev.u.div");
-      Value *MulU = Builder.CreateMul(DivU, OpR, "titaev.u.mul");
-      return Builder.CreateSub(OpL, MulU, "titaev.u.res");
-    }
-
-    if (OpCode == Instruction::FRem) {
-      Value *DivF = Builder.CreateFDiv(OpL, OpR, "titaev.f.div");
-      // Форматирование для clang-format (разрыв длинной строки)
-      Value *Trunc = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, DivF,
-                                                  nullptr, "titaev.f.trunc");
-      Value *MulF = Builder.CreateFMul(Trunc, OpR, "titaev.f.mul");
-      return Builder.CreateFSub(OpL, MulF, "titaev.f.res");
-    }
-
-    return nullptr;
-  }
-
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
-    bool IsChanged = false;
-    SmallVector<Instruction *, 32> WorkList;
-
+class RemainderTransformVisitor
+    : public InstVisitor<RemainderTransformVisitor, bool> {
+public:
+  bool run(Function &F) {
+    bool Changed = false;
     for (auto &BB : F) {
-      for (auto &I : BB) {
-        unsigned Op = I.getOpcode();
-        if (Op == Instruction::SRem || Op == Instruction::URem ||
-            Op == Instruction::FRem) {
-          WorkList.push_back(&I);
-        }
+      for (auto I = BB.begin(), E = BB.end(); I != E;) {
+        Instruction &Inst = *I++;
+        Changed |= visit(Inst);
       }
     }
-
-    for (Instruction *I : WorkList) {
-      if (Value *Replacement = transformRem(I)) {
-        I->replaceAllUsesWith(Replacement);
-        I->eraseFromParent();
-        IsChanged = true;
-      }
-    }
-
-    return IsChanged ? PreservedAnalyses::none() : PreservedAnalyses::all();
+    return Changed;
   }
 
+  // Обработка знаковых целых чисел
+  bool visitSRem(BinaryOperator &I) {
+    IRBuilder<> Builder(&I);
+    Value *Op0 = I.getOperand(0);
+    Value *Op1 = I.getOperand(1);
+
+    Value *Quotient = Builder.CreateSDiv(Op0, Op1, "ext.s.div");
+    Value *Product = Builder.CreateMul(Quotient, Op1, "ext.s.mul");
+    Value *Result = Builder.CreateSub(Op0, Product, "ext.s.rem");
+
+    I.replaceAllUsesWith(Result);
+    I.eraseFromParent();
+    return true;
+  }
+
+  bool visitURem(BinaryOperator &I) {
+    IRBuilder<> Builder(&I);
+    Value *Op0 = I.getOperand(0);
+    Value *Op1 = I.getOperand(1);
+
+    Value *Quotient = Builder.CreateUDiv(Op0, Op1, "ext.u.div");
+    Value *Product = Builder.CreateMul(Quotient, Op1, "ext.u.mul");
+    Value *Result = Builder.CreateSub(Op0, Product, "ext.u.rem");
+
+    I.replaceAllUsesWith(Result);
+    I.eraseFromParent();
+    return true;
+  }
+
+  bool visitFRem(BinaryOperator &I) {
+    IRBuilder<> Builder(&I);
+    Value *Op0 = I.getOperand(0);
+    Value *Op1 = I.getOperand(1);
+
+    Value *FDiv = Builder.CreateFDiv(Op0, Op1, "ext.f.div");
+    Value *Trunc = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, FDiv, nullptr,
+                                                "ext.f.trunc");
+    Value *FMul = Builder.CreateFMul(Trunc, Op1, "ext.f.mul");
+    Value *FSub = Builder.CreateFSub(Op0, FMul, "ext.f.rem");
+
+    I.replaceAllUsesWith(FSub);
+    I.eraseFromParent();
+    return true;
+  }
+};
+
+struct RemDecompositionPass : public PassInfoMixin<RemDecompositionPass> {
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
+    RemainderTransformVisitor Visitor;
+    if (Visitor.run(F))
+      return PreservedAnalyses::none();
+    return PreservedAnalyses::all();
+  }
   static bool isRequired() { return true; }
 };
 
@@ -74,13 +83,13 @@ struct TitaevMRemainderExpansion
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "TitaevMRemainderExpansionPlugin", "1.0",
+  return {LLVM_PLUGIN_API_VERSION, "RemDecompositionPlugin", "3.0",
           [](PassBuilder &PB) {
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, FunctionPassManager &FPM,
                    ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "titaev-m-expand-rem") {
-                    FPM.addPass(TitaevMRemainderExpansion());
+                  if (Name == "decompose-remainder") {
+                    FPM.addPass(RemDecompositionPass());
                     return true;
                   }
                   return false;
