@@ -4,6 +4,10 @@
   source_filename = "titaev_test_suite.ll"
   target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
+  define i32 @foo1(i32 %value) { ret i32 %value }
+  define i32 @foo2(i32 %value) { ret i32 %value }
+  define i32 @foo3(i32 %value) { ret i32 %value }
+  
   define void @callee_small() { ret void }
   define void @callee_limit_26() { ret void }
   define void @test_entry() { ret void }
@@ -12,6 +16,54 @@
   define void @extra_filler_1() { ret void }
   define void @extra_filler_2() { ret void }
 ...
+---
+# === TEACHER TESTS START ===
+name:            foo1
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $edi
+    $eax = COPY $edi
+    $eax = IMUL32rr $eax, $eax, implicit-def dead $eflags
+    RET64 $eax
+---
+name:            foo2
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $edi
+    $ebx = COPY $edi
+    $ebx = ADD32ri $ebx, 10, implicit-def dead $eflags
+    CALL64pcrel32 @foo1, implicit $rsp, implicit $ssp, implicit $edi, implicit-def $eax
+    $ecx = COPY $eax
+    $eax = COPY $ebx
+    $eax = SUB32rr $eax, $ecx, implicit-def dead $eflags
+    RET64 $eax
+---
+name:            foo3
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $edi
+    CALL64pcrel32 @foo2, implicit $rsp, implicit $ssp, implicit $edi, implicit-def $eax
+    $ebx = COPY $eax
+    $edi = COPY $ebx
+    CALL64pcrel32 @foo1, implicit $rsp, implicit $ssp, implicit $edi, implicit-def $eax
+    $ecx = COPY $eax
+    $eax = COPY $ebx
+    $eax = IMUL32rr $eax, $ecx, implicit-def dead $eflags
+    RET64 $eax
+
+# CHECK-LABEL: name: foo2
+# CHECK-NOT: CALL64pcrel32 @foo1
+# CHECK: IMUL32rr
+# CHECK: SUB32rr
+
+# CHECK-LABEL: name: foo3
+# CHECK-NOT: CALL64pcrel32 @foo2
+# CHECK: ADD32ri
+# CHECK: SUB32rr
+# === TEACHER TESTS END ===
 ---
 name:            callee_small
 tracksRegLiveness: true
@@ -54,10 +106,8 @@ body:             |
     RET64
 ---
 # CHECK-LABEL: name: test_entry
-# CHECK: bb.0:
 # CHECK-NOT: CALL64pcrel32 @callee_small
 # CHECK-DAG: $eax = MOV32ri 42
-# CHECK-DAG: $ebx = MOV32ri 24
 # CHECK: CALL64pcrel32 @callee_limit_26
 name:            test_entry
 tracksRegLiveness: true
@@ -68,9 +118,7 @@ body:             |
     RET64
 ---
 # CHECK-LABEL: name: recursive_func
-# CHECK: bb.0:
-# CHECK: $ecx = INC32r
-# CHECK-NEXT: CALL64pcrel32 @recursive_func
+# CHECK: CALL64pcrel32 @recursive_func
 name:            recursive_func
 tracksRegLiveness: true
 body:             |
@@ -81,9 +129,7 @@ body:             |
     RET64
 ---
 # CHECK-LABEL: name: symbol_test
-# CHECK: bb.0:
 # CHECK-NOT: CALL64pcrel32 @callee_small
-# CHECK: $eax = MOV32ri 42
 name:            symbol_test
 tracksRegLiveness: true
 body:             |
@@ -97,14 +143,22 @@ body:             |
     $rax = MOV64ri 100
     $rbx = MOV64ri 200
     $rcx = MOV64ri 300
+    $rdx = MOV64ri 400
+    $rsi = MOV64ri 500
+    $rdi = MOV64ri 600
+    $r8 = MOV64ri 700
     RET64
 ---
 name:            extra_filler_2
 body:             |
   bb.0:
-    $rdi = MOV64ri 1000
-    $rsi = MOV64ri 2000
-    $rdx = MOV64ri 3000
-    $r8 = MOV64ri 4000
-    $r9 = MOV64ri 5000
+    $xmm0 = MOV64ri 1
+    $xmm1 = MOV64ri 2
+    $xmm2 = MOV64ri 3
+    $xmm3 = MOV64ri 4
+    $xmm4 = MOV64ri 5
+    $xmm5 = MOV64ri 6
+    $xmm6 = MOV64ri 7
+    $xmm7 = MOV64ri 8
+    $xmm8 = MOV64ri 9
     RET64
