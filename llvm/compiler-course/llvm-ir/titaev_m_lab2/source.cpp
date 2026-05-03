@@ -2,6 +2,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 
@@ -23,7 +24,8 @@ public:
     return Changed;
   }
 
-  // Обработка знаковых целых чисел
+  bool visitInstruction(Instruction &I) { return false; }
+
   bool visitSRem(BinaryOperator &I) {
     IRBuilder<> Builder(&I);
     Value *Op0 = I.getOperand(0);
