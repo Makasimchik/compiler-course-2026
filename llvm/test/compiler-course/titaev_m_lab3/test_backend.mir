@@ -152,13 +152,12 @@ body:             |
 name:            extra_filler_2
 body:             |
   bb.0:
-    $xmm0 = MOV64ri 1
-    $xmm1 = MOV64ri 2
-    $xmm2 = MOV64ri 3
-    $xmm3 = MOV64ri 4
-    $xmm4 = MOV64ri 5
-    $xmm5 = MOV64ri 6
-    $xmm6 = MOV64ri 7
-    $xmm7 = MOV64ri 8
-    $xmm8 = MOV64ri 9
+    $r10 = MOV64ri 10
+    $r11 = MOV64ri 20
+    $r12 = MOV64ri 30
+    $r13 = MOV64ri 40
+    $r14 = MOV64ri 50
+    $r15 = MOV64ri 60
+    $rax = ADD64rr $r10, $r11, implicit-def $eflags
+    $rbx = SUB64rr $r12, $r13, implicit-def $eflags
     RET64
