@@ -26,25 +26,30 @@ public:
         getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
     bool Changed = false;
 
-    for (Function &F : M) {
-      if (F.isDeclaration())
-        continue;
-      if (MachineFunction *MF = MMI.getMachineFunction(F)) {
-        Changed |= runOnMachineFunction(*MF, MMI);
+    for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
+      bool LocalChanged = false;
+      for (Function &F : M) {
+        if (F.isDeclaration())
+          continue;
+        if (MachineFunction *MF = MMI.getMachineFunction(F)) {
+          LocalChanged |= runOnMachineFunction(*MF, MMI);
+        }
       }
+      Changed |= LocalChanged;
+      if (!LocalChanged)
+        break;
     }
     return Changed;
   }
 
 private:
-  static constexpr unsigned MaxInstrs = 25;
+  static constexpr unsigned MaxInstrs = 15;
+  static constexpr unsigned MaxDepth = 3;
 
   bool runOnMachineFunction(MachineFunction &MF, MachineModuleInfo &MMI) {
-    bool LocalChanged = false;
     for (auto &MBB : MF) {
       for (auto MI = MBB.begin(); MI != MBB.end();) {
         MachineInstr &CallInst = *MI++;
-
         if (CallInst.getOpcode() != X86::CALL64pcrel32)
           continue;
 
@@ -52,22 +57,18 @@ private:
         if (!Callee || !shouldInline(*Callee))
           continue;
 
-        if (Callee == &MF)
-          continue;
-
         performInline(MBB, CallInst, *Callee);
         return true;
       }
     }
-    return LocalChanged;
+    return false;
   }
 
   MachineFunction *findCallee(MachineInstr &MI, MachineFunction &Caller,
                               MachineModuleInfo &MMI) {
     for (const MachineOperand &MO : MI.operands()) {
-      if (MO.isGlobal() && isa<Function>(MO.getGlobal())) {
+      if (MO.isGlobal() && isa<Function>(MO.getGlobal()))
         return MMI.getMachineFunction(*cast<Function>(MO.getGlobal()));
-      }
       if (MO.isSymbol()) {
         if (Function *F = Caller.getFunction().getParent()->getFunction(
                 MO.getSymbolName()))
@@ -102,9 +103,7 @@ private:
     CallInst.eraseFromParent();
   }
 };
-
 char ExamplePass::ID = 0;
 } // namespace
-
 static RegisterPass<ExamplePass> X("example-x86", "X86 Machine Inline Pass",
                                    false, false);
