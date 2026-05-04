@@ -1,4 +1,4 @@
-; RUN: opt -load-pass-plugin %llvmshlibdir/RemDecompositionPlugin%pluginext \
+; RUN: opt -load-pass-plugin %llvmshlibdir/titaev_m_lab2_LLVM_IR%pluginext \
 ; RUN: -passes=decompose-remainder -S %s | FileCheck %s
 
 ; Тест 1: Проверка знакового деления на 16-битном целом числе
