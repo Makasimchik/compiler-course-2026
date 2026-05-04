@@ -44,11 +44,11 @@ define <4 x float> @vector_simd_4x(<4 x float> %v1, <4 x float> %v2) {
   ret <4 x float> %vrem
 }
 
-; Тест 5: Комбинированный случай, чтобы показать, что пасс не портит остальной код
+; Тест 5: Комбинированный случай
 ; CHECK-LABEL: @mixed_math
 ; CHECK: %sum = fadd float %x, 1.0
-; CHECK: %fdiv = fdiv float %sum, %y
-; CHECK: %ext.f.rem = fsub float %sum,
+; CHECK: [[FDIV:%.+]] = fdiv float %sum, %y
+; CHECK: [[FREM:%.+]] = fsub float %sum,
 define float @mixed_math(float %x, float %y) {
   %sum = fadd float %x, 1.0
   %res = frem float %sum, %y
