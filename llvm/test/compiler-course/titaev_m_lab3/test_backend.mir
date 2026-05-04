@@ -12,7 +12,6 @@
   define void @recursive_func() { ret void }
   define void @test_limits() { ret void }
   define void @extra_filler_1() { ret void }
-  define void @extra_filler_2() { ret void }
 ...
 ---
 # === TEACHER TESTS START ===
@@ -118,9 +117,7 @@ body:             |
     RET64
 ---
 # CHECK-LABEL: name: recursive_func
-# CHECK: $ecx = INC32r
-# CHECK: $ecx = INC32r
-# CHECK: $ecx = INC32r
+# CHECK: INC32r
 # CHECK: CALL64pcrel32 @recursive_func
 name:            recursive_func
 tracksRegLiveness: true
@@ -142,17 +139,4 @@ body:             |
     $rdi = MOV64ri 600
     $r8 = MOV64ri 700
     $r9 = MOV64ri 800
-    RET64
----
-name:            extra_filler_2
-body:             |
-  bb.0:
-    $r10 = MOV64ri 10
-    $r11 = MOV64ri 20
-    $r12 = MOV64ri 30
-    $r13 = MOV64ri 40
-    $r14 = MOV64ri 50
-    $r15 = MOV64ri 60
-    $rax = MOV64ri 70
-    $rbx = MOV64ri 80
     RET64

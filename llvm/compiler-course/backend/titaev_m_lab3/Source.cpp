@@ -93,12 +93,20 @@ private:
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
                      MachineFunction &Callee) {
     MachineFunction &CallerMF = *MBB.getParent();
+    SmallVector<MachineInstr *, 16> InstrsToInline;
+
+    // Сначала собираем инструкции, чтобы избежать бесконечного цикла при
+    // рекурсии
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (CMI.isReturn() || CMI.isTerminator())
           continue;
-        MBB.insert(CallInst, CallerMF.CloneMachineInstr(&CMI));
+        InstrsToInline.push_back(&CMI);
       }
+    }
+
+    for (auto *I : InstrsToInline) {
+      MBB.insert(CallInst, CallerMF.CloneMachineInstr(I));
     }
     CallInst.eraseFromParent();
   }
