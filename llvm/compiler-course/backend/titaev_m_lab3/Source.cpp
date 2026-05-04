@@ -25,7 +25,6 @@ public:
     MachineModuleInfo &MMI =
         getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
     bool Changed = false;
-
     for (unsigned Depth = 0; Depth < MaxDepth; ++Depth) {
       bool LocalChanged = false;
       for (Function &F : M) {
@@ -52,11 +51,9 @@ private:
         MachineInstr &CallInst = *MI++;
         if (CallInst.getOpcode() != X86::CALL64pcrel32)
           continue;
-
         MachineFunction *Callee = findCallee(CallInst, MF, MMI);
         if (!Callee || !shouldInline(*Callee))
           continue;
-
         performInline(MBB, CallInst, *Callee);
         return true;
       }
@@ -93,19 +90,15 @@ private:
   void performInline(MachineBasicBlock &MBB, MachineInstr &CallInst,
                      MachineFunction &Callee) {
     MachineFunction &CallerMF = *MBB.getParent();
-    SmallVector<MachineInstr *, 16> InstrsToInline;
-
-    // Сначала собираем инструкции, чтобы избежать бесконечного цикла при
-    // рекурсии
+    SmallVector<MachineInstr *, 16> Instrs;
     for (auto &CBB : Callee) {
       for (auto &CMI : CBB) {
         if (CMI.isReturn() || CMI.isTerminator())
           continue;
-        InstrsToInline.push_back(&CMI);
+        Instrs.push_back(&CMI);
       }
     }
-
-    for (auto *I : InstrsToInline) {
+    for (auto *I : Instrs) {
       MBB.insert(CallInst, CallerMF.CloneMachineInstr(I));
     }
     CallInst.eraseFromParent();

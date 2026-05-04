@@ -1,9 +1,6 @@
 # RUN: llc -mtriple x86_64-unknown-linux-gnu -load=%llvmshlibdir/titaev_m_lab3_BACKEND%shlibext -run-pass=example-x86 %s -o - | FileCheck %s
 
 --- |
-  source_filename = "titaev_test_suite.ll"
-  target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
-
   define i32 @foo1(i32 %value) { ret i32 %value }
   define i32 @foo2(i32 %value) { ret i32 %value }
   define i32 @foo3(i32 %value) { ret i32 %value }
@@ -14,9 +11,7 @@
   define void @extra_filler_1() { ret void }
 ...
 ---
-# === TEACHER TESTS START ===
 name:            foo1
-tracksRegLiveness: true
 body:             |
   bb.0:
     liveins: $edi
@@ -25,7 +20,6 @@ body:             |
     RET64 $eax
 ---
 name:            foo2
-tracksRegLiveness: true
 body:             |
   bb.0:
     liveins: $edi
@@ -36,9 +30,11 @@ body:             |
     $eax = COPY $ebx
     $eax = SUB32rr $eax, $ecx, implicit-def dead $eflags
     RET64 $eax
+# CHECK-LABEL: name: foo2
+# CHECK-NOT: CALL64pcrel32 @foo1
+# CHECK: IMUL32rr
 ---
 name:            foo3
-tracksRegLiveness: true
 body:             |
   bb.0:
     liveins: $edi
@@ -50,20 +46,12 @@ body:             |
     $eax = COPY $ebx
     $eax = IMUL32rr $eax, $ecx, implicit-def dead $eflags
     RET64 $eax
-
-# CHECK-LABEL: name: foo2
-# CHECK-NOT: CALL64pcrel32 @foo1
-# CHECK: IMUL32rr
-
 # CHECK-LABEL: name: foo3
 # CHECK-NOT: CALL64pcrel32 @foo2
 # CHECK-NOT: CALL64pcrel32 @foo1
 # CHECK: ADD32ri
-# CHECK: IMUL32rr
-# === TEACHER TESTS END ===
 ---
 name:            callee_limit_15
-tracksRegLiveness: true
 body:             |
   bb.0:
     $eax = MOV32ri 1
@@ -84,7 +72,6 @@ body:             |
     RET64
 ---
 name:            callee_limit_16
-tracksRegLiveness: true
 body:             |
   bb.0:
     $ebx = MOV32ri 1
@@ -105,28 +92,26 @@ body:             |
     $ebx = MOV32ri 16
     RET64
 ---
-# CHECK-LABEL: name: test_limits
-# CHECK-NOT: CALL64pcrel32 @callee_limit_15
-# CHECK: CALL64pcrel32 @callee_limit_16
-name:            test_limits
-tracksRegLiveness: true
-body:             |
-  bb.0:
-    CALL64pcrel32 @callee_limit_15, implicit $rsp, implicit $ssp
-    CALL64pcrel32 @callee_limit_16, implicit $rsp, implicit $ssp
-    RET64
----
-# CHECK-LABEL: name: recursive_func
-# CHECK: INC32r
-# CHECK: CALL64pcrel32 @recursive_func
 name:            recursive_func
-tracksRegLiveness: true
 body:             |
   bb.0:
     liveins: $ecx
     $ecx = INC32r $ecx, implicit-def $eflags
     CALL64pcrel32 @recursive_func, implicit $rsp, implicit $ssp, implicit $ecx
     RET64
+# CHECK-LABEL: name: recursive_func
+# CHECK: INC32r
+# CHECK: CALL64pcrel32 @recursive_func
+---
+name:            test_limits
+body:             |
+  bb.0:
+    CALL64pcrel32 @callee_limit_15, implicit $rsp, implicit $ssp
+    CALL64pcrel32 @callee_limit_16, implicit $rsp, implicit $ssp
+    RET64
+# CHECK-LABEL: name: test_limits
+# CHECK-NOT: CALL64pcrel32 @callee_limit_15
+# CHECK: CALL64pcrel32 @callee_limit_16
 ---
 name:            extra_filler_1
 body:             |
