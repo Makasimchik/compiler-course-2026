@@ -1,6 +1,6 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/SCF/IR/SCF.h" // Изменено: более общий путь
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -47,9 +47,13 @@ private:
     if (!block)
       return;
 
-    OpBuilder builder(block->getContext());
+    MLIRContext *ctx = block->getParentOp()->getContext();
+    OpBuilder builder(ctx);
     Location loc = block->getParentOp()->getLoc();
+
     ModuleOp module = block->getParentOp()->getParentOfType<ModuleOp>();
+    if (!module)
+      return;
 
     FlatSymbolRefAttr beginRef =
         getOrInsertFuncDeclaration(module, beginFuncName);
@@ -59,8 +63,10 @@ private:
     builder.create<func::CallOp>(loc, beginRef, TypeRange{});
 
     Operation *terminator = block->getTerminator();
-    builder.setInsertionPoint(terminator);
-    builder.create<func::CallOp>(loc, endRef, TypeRange{});
+    if (terminator) {
+      builder.setInsertionPoint(terminator);
+      builder.create<func::CallOp>(loc, endRef, TypeRange{});
+    }
   }
 
   FlatSymbolRefAttr getOrInsertFuncDeclaration(ModuleOp module,
@@ -69,7 +75,9 @@ private:
     if (module.lookupSymbol<func::FuncOp>(name))
       return SymbolRefAttr::get(ctx, name);
 
+    // Вставляем декларацию в начало модуля
     OpBuilder builder(module.getBodyRegion());
+    builder.setInsertionPointToStart(&module.getBodyRegion().front());
     auto funcType = FunctionType::get(ctx, {}, {});
     builder.create<func::FuncOp>(module.getLoc(), name, funcType).setPrivate();
     return SymbolRefAttr::get(ctx, name);
