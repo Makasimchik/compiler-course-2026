@@ -73,7 +73,6 @@ func.func @test_empty_blocks(% cond : i1) {
   return
 }
 
-// Проверка того, что декларации вставились в модуль
 // CHECK: func.func private @trace_condition_then_begin()
 // CHECK: func.func private @trace_condition_then_end()
 // CHECK: func.func private @trace_condition_else_begin()
