@@ -1,4 +1,4 @@
-// RUN: mlir-opt -load-pass-plugin=%mlir_lib_dir/TraceConditionPass%shlibext
+// RUN: mlir-opt -load-pass-plugin=%mlir_lib_dir/titaev_m_lab4_MLIR%shlibext
 // --pass-pipeline="builtin.module(trace-condition)" %s | FileCheck %s
 
 // CHECK-LABEL: func.func @test_scf_if_else
@@ -64,21 +64,17 @@ func.func @test_nested_ifs(% c1 : i1, % c2 : i1) {
 }
 
 // CHECK-LABEL: func.func @test_empty_blocks
-func.func @test_empty_blocks(% cond : i1)
-    // CHECK: scf.if %arg0 {
-    // CHECK-NEXT: call @trace_condition_then_begin()
-    // CHECK-NEXT: call @trace_condition_then_end()
-    // CHECK-NEXT: scf.yield
-    scf.if %
-    cond {
-  scf.yield
-}
-return
+func.func @test_empty_blocks(% cond : i1) {
+  // CHECK: scf.if %arg0 {
+  // CHECK-NEXT: call @trace_condition_then_begin()
+  // CHECK-NEXT: call @trace_condition_then_end()
+  // CHECK-NEXT: scf.yield
+  scf.if % cond { scf.yield }
+  return
 }
 
+// Проверка того, что декларации вставились в модуль
 // CHECK: func.func private @trace_condition_then_begin()
 // CHECK: func.func private @trace_condition_then_end()
 // CHECK: func.func private @trace_condition_else_begin()
 // CHECK: func.func private @trace_condition_else_end()
-
-#set = affine_set < (d0) : (d0 == 0)>
