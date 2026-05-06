@@ -64,7 +64,7 @@ func.func @test_nested_ifs(% c1 : i1, % c2 : i1) {
 }
 
 // CHECK-LABEL: func.func @test_empty_blocks
-func.func @test_empty_blocks(% cond : i1) {
+func.func @test_empty_blocks(% cond : i1) 
   // CHECK: scf.if %arg0 {
   // CHECK-NEXT: call @trace_condition_then_begin()
   // CHECK-NEXT: call @trace_condition_then_end()
