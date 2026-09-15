@@ -9,6 +9,19 @@ extern "C" {
     void* fopen(const char* filename, const char* mode);
 }
 
+// Дополнительное задание:
+// warning должен появляться только для определения функции,
+// в имени которой содержится "deprecated".
+void deprecated_declared_only();
+
+void deprecated_function() {} // expected-warning {{function 'deprecated_function' contains 'deprecated' in its name}}
+
+int my_deprecated_api(int value) { // expected-warning {{function 'my_deprecated_api' contains 'deprecated' in its name}}
+    return value;
+}
+
+void normal_function() {}
+
 int* g_leak = (int*)malloc(100); // expected-warning {{Память или ресурс для переменной 'g_leak' не освобождены!}}
 
 int* return_malloc_leak(int n) {

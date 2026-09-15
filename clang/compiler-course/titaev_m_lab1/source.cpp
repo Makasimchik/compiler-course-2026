@@ -31,6 +31,25 @@ class ResourceLeakVisitor final
 public:
   explicit ResourceLeakVisitor(ASTContext *ctx) : ctx(ctx) {}
 
+  bool VisitFunctionDecl(FunctionDecl *fd) {
+    if (!fd->isThisDeclarationADefinition())
+      return true;
+
+    StringRef name = fd->getName();
+
+    if (!name.contains("deprecated"))
+      return true;
+
+    DiagnosticsEngine &DE = ctx->getDiagnostics();
+    unsigned id =
+        DE.getCustomDiagID(DiagnosticsEngine::Warning,
+                           "function '%0' contains 'deprecated' in its name");
+
+    DE.Report(fd->getLocation(), id) << name;
+
+    return true;
+  }
+
   bool VisitVarDecl(VarDecl *vd) {
     if (!vd->hasInit())
       return true;
