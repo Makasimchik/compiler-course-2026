@@ -1,0 +1,247 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/sakharov_a_lab3_BACKEND%shlibext \
+# RUN:   -run-pass=insert-null-check-x86 %s -o - | FileCheck %s
+
+# Source files
+# test.cpp
+# int read_ptr(int *p) { return *p; }
+# void write_ptr(int *p, int value) { *p = value; }
+# int read_indexed(int *arr, int i) { return arr[i]; }
+# int sum_two_ptrs(int *lhs, int *rhs) { return *lhs + *rhs; }
+# int read_same_ptr_twice(int *p) { return *p + *p; }
+# int read_after_pointer_update(int *first, int *second) { return *first + *second; }
+# int stack_frame_load() { int local = 11; return local; }
+# int stack_slot_load() { int local = 7; return local; }
+
+--- |
+  define i32 @read_ptr(ptr %p) {
+  entry:
+    %value = load i32, ptr %p
+    ret i32 %value
+  }
+
+  define void @write_ptr(ptr %p, i32 %value) {
+  entry:
+    store i32 %value, ptr %p
+    ret void
+  }
+
+  define i32 @read_indexed(ptr %arr, i32 %i) {
+  entry:
+    %index = sext i32 %i to i64
+    %element.ptr = getelementptr i32, ptr %arr, i64 %index
+    %value = load i32, ptr %element.ptr
+    ret i32 %value
+  }
+
+  define i32 @sum_two_ptrs(ptr %lhs, ptr %rhs) {
+  entry:
+    %lhs.value = load i32, ptr %lhs
+    %rhs.value = load i32, ptr %rhs
+    %sum = add i32 %lhs.value, %rhs.value
+    ret i32 %sum
+  }
+
+  define i32 @read_same_ptr_twice(ptr %p) {
+  entry:
+    %first = load i32, ptr %p
+    %second = load i32, ptr %p
+    %sum = add i32 %first, %second
+    ret i32 %sum
+  }
+
+  define i32 @read_after_pointer_update(ptr %first, ptr %second) {
+  entry:
+    %left = load i32, ptr %first
+    %right = load i32, ptr %second
+    %sum = add i32 %left, %right
+    ret i32 %sum
+  }
+
+  define i32 @stack_frame_load() {
+  entry:
+    ret i32 11
+  }
+
+  define i32 @stack_slot_load() {
+  entry:
+    ret i32 7
+  }
+...
+---
+# CHECK-LABEL: name:            read_ptr
+# CHECK:      $rdi = COPY %0
+# CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+# CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+name:            read_ptr
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+---
+# CHECK-LABEL: name:            write_ptr
+# CHECK:      $rdi = COPY %0
+# CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+# CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %1
+name:            write_ptr
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $esi
+    %1:gr32 = COPY $esi
+    %0:gr64 = COPY $rdi
+
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+---
+# CHECK-LABEL: name:            read_indexed
+# CHECK:      $rdi = COPY %0
+# CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+# CHECK-NEXT: %3:gr32 = MOV32rm %0, 4, killed %2, 0, $noreg
+name:            read_indexed
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr64_nosp }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $esi
+    %1:gr32 = COPY $esi
+    %0:gr64 = COPY $rdi
+    %2:gr64_nosp = MOVSX64rr32 %1
+
+    %3:gr32 = MOV32rm %0, 4, killed %2, 0, $noreg
+    $eax = COPY %3
+    RET 0, $eax
+---
+# CHECK-LABEL: name:            sum_two_ptrs
+# CHECK:      $rdi = COPY %1
+# CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+# CHECK-NEXT: %2:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+# CHECK:      $rdi = COPY %0
+# CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+# CHECK-NEXT: %3:gr32 = nsw ADD32rm %2, %0, 1, $noreg, 0, $noreg
+name:            sum_two_ptrs
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $rsi
+    %1:gr64 = COPY $rsi
+    %0:gr64 = COPY $rdi
+
+    %2:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %3:gr32 = nsw ADD32rm %2, %0, 1, $noreg, 0, $noreg, implicit-def dead $eflags
+    $eax = COPY %3
+    RET 0, $eax
+---
+# CHECK-LABEL: name:            read_same_ptr_twice
+# CHECK:      $rdi = COPY %0
+# CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+# CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+# CHECK-NEXT: %2:gr32 = nsw ADD32rm %1, %0, 1, $noreg, 0, $noreg
+# CHECK-NOT:  CALL64pcrel32 {{.*}}check_null{{.*}}
+name:            read_same_ptr_twice
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %2:gr32 = nsw ADD32rm %1, %0, 1, $noreg, 0, $noreg, implicit-def dead $eflags
+    $eax = COPY %2
+    RET 0, $eax
+---
+# CHECK-LABEL: name:            read_after_pointer_update
+# CHECK:      $rdi = COPY %0
+# CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+# CHECK-NEXT: %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+# CHECK:      %0:gr64 = COPY killed %1
+# CHECK-NEXT: $rdi = COPY %0
+# CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+# CHECK-NEXT: %3:gr32 = nsw ADD32rm %2, %0, 1, $noreg, 0, $noreg
+name:            read_after_pointer_update
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64 = COPY $rsi
+
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %0:gr64 = COPY killed %1
+    %3:gr32 = nsw ADD32rm %2, %0, 1, $noreg, 0, $noreg, implicit-def dead $eflags
+    $eax = COPY %3
+    RET 0, $eax
+---
+# CHECK-LABEL: name:            stack_frame_load
+# CHECK:      bb.0.entry:
+# CHECK-NEXT: %0:gr32 = MOV32rm $rbp, 1, $noreg, -4, $noreg
+# CHECK-NEXT: $eax = COPY %0
+# CHECK-NEXT: RET 0, $eax
+name:            stack_frame_load
+tracksRegLiveness: false
+registers:
+  - { id: 0, class: gr32 }
+body:             |
+  bb.0.entry:
+    %0:gr32 = MOV32rm $rbp, 1, $noreg, -4, $noreg
+    $eax = COPY %0
+    RET 0, $eax
+---
+# CHECK-LABEL: name:            stack_slot_load
+# CHECK:      bb.0.entry:
+# CHECK-NEXT: %0:gr32 = MOV32rm $rsp, 1, $noreg, 8, $noreg
+# CHECK-NEXT: $eax = COPY %0
+# CHECK-NEXT: RET 0, $eax
+name:            stack_slot_load
+tracksRegLiveness: false
+registers:
+  - { id: 0, class: gr32 }
+body:             |
+  bb.0.entry:
+    %0:gr32 = MOV32rm $rsp, 1, $noreg, 8, $noreg
+    $eax = COPY %0
+    RET 0, $eax

@@ -1,0 +1,87 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/makovskii_i_lab3_BACKEND%shlibext \
+# RUN: -run-pass=x86-insert-null-check %s -o - | FileCheck %s
+
+--- |
+  define i64 @read_ptr(ptr %ptr) {
+    %val = load i64, ptr %ptr
+    ret i64 %val
+  }
+
+  define void @write_ptr(ptr %ptr, i64 %v) {
+    store i64 %v, ptr %ptr
+    ret void
+  }
+
+  define i32 @array_access(ptr %arr, i64 %idx) {
+    %p = getelementptr i32, ptr %arr, i64 %idx
+    %val = load i32, ptr %p
+    ret i32 %val
+  }
+...
+---
+# CHECK-LABEL: name: read_ptr
+name:            read_ptr
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body:             |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}__verify_pointer{{.*}}
+    ; CHECK-NEXT: %1:gr64 = MOV64rm %0, 1, $noreg, 0, $noreg
+    
+    %1:gr64 = MOV64rm %0, 1, $noreg, 0, $noreg
+    $rax = COPY %1
+    RET 0, $rax
+---
+# CHECK-LABEL: name: write_ptr
+name:            write_ptr
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body:             |
+  bb.0:
+    liveins: $rdi, $rsi
+    %1:gr64 = COPY $rsi
+    %0:gr64 = COPY $rdi
+    
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}__verify_pointer{{.*}}
+    ; CHECK-NEXT: MOV64mr %0, 1, $noreg, 0, $noreg, %1
+    
+    MOV64mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+---
+# CHECK-LABEL: name: array_access
+name:            array_access
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64_nosp }
+  - { id: 2, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body:             |
+  bb.0:
+    liveins: $rdi, $rsi
+    %1:gr64_nosp = COPY $rsi
+    %0:gr64 = COPY $rdi
+    
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}__verify_pointer{{.*}}
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+    
+    %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+    $eax = COPY %2
+    RET 0, $eax

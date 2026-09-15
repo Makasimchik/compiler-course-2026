@@ -1,0 +1,77 @@
+# RUN: llc -load=%llvmshlibdir/kutergin_a_lab3_BACKEND%shlibext -run-pass=inc-dec-to-add-sub -o - %s | FileCheck %s
+
+---
+name:            test_inc_folding
+body:             |
+  bb.0:
+    liveins: $edi
+    ; CHECK-LABEL: name: test_inc_folding
+    ; CHECK: $edi = ADD32ri8 $edi, 3
+    $edi = INC32r $edi, implicit-def dead $eflags
+    $edi = INC32r $edi, implicit-def dead $eflags
+    $edi = INC32r $edi, implicit-def dead $eflags
+    RET 0
+
+---
+name:            test_mixed_and_zero
+body:             |
+  bb.0:
+    liveins: $eax
+    ; CHECK-LABEL: name: test_mixed_and_zero
+    ; CHECK: $eax = ADD32ri8 $eax, 1
+    $eax = INC32r $eax, implicit-def dead $eflags
+    $eax = INC32r $eax, implicit-def dead $eflags
+    $eax = DEC32r $eax, implicit-def dead $eflags
+    RET 0
+
+---
+name:            test_different_regs
+body:             |
+  bb.0:
+    liveins: $edi, $esi
+    ; CHECK-LABEL: name: test_different_regs
+    ; CHECK: $edi = ADD32ri8 $edi, 1
+    ; CHECK: $esi = ADD32ri8 $esi, 1
+    $edi = INC32r $edi, implicit-def dead $eflags
+    $esi = INC32r $esi, implicit-def dead $eflags
+    RET 0
+
+---
+name:            test_64bit
+body:             |
+  bb.0:
+    liveins: $rdi
+    ; CHECK-LABEL: name: test_64bit
+    ; CHECK: $rdi = SUB64ri8 $rdi, 2
+    $rdi = DEC64r $rdi, implicit-def dead $eflags
+    $rdi = DEC64r $rdi, implicit-def dead $eflags
+    RET 0
+
+---
+name:            test_inc_dec_cancel
+body:             |
+  bb.0:
+    liveins: $ebx
+    ; CHECK-LABEL: name: test_inc_dec_cancel
+    ; CHECK-NOT: INC32r
+    ; CHECK-NOT: DEC32r
+    ; CHECK-NOT: ADD32ri8
+    ; CHECK: RET 0
+    $ebx = INC32r $ebx, implicit-def dead $eflags
+    $ebx = DEC32r $ebx, implicit-def dead $eflags
+    RET 0
+
+---
+name:            test_interrupted_chain
+body:             |
+  bb.0:
+    liveins: $eax, $ebx
+    ; CHECK-LABEL: name: test_interrupted_chain
+    ; Цепочка для eax прерывается инструкцией mov, поэтому должно быть два ADD по 1
+    ; CHECK: $eax = ADD32ri8 $eax, 1
+    ; CHECK: $ebx = MOV32rr $eax
+    ; CHECK: $eax = ADD32ri8 $eax, 1
+    $eax = INC32r $eax, implicit-def dead $eflags
+    $ebx = MOV32rr $eax
+    $eax = INC32r $eax, implicit-def dead $eflags
+    RET 0

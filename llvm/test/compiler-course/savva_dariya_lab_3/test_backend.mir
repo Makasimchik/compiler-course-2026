@@ -1,0 +1,143 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu \
+# RUN: --load=%llvmshlibdir/SavvaDariyaInsertCheckPass_Savva_Dariya_FIIT1_BACKEND%shlibext \
+# RUN: -run-pass=savvadariya-insert-check %s -o - | FileCheck %s
+
+--- |
+  ; ВЕСЬ LLVM IR ДОЛЖЕН БЫТЬ В ОДНОМ БЛОКЕ ЗДЕСЬ
+  define i32 @load_basic(ptr %p) {
+  entry:
+    %v = load i32, ptr %p
+    ret i32 %v
+  }
+
+  define void @store_basic(ptr %p, i32 %v) {
+  entry:
+    store i32 %v, ptr %p
+    ret void
+  }
+
+  define i32 @gep_case(ptr %arr, i64 %idx) {
+  entry:
+    %p = getelementptr i32, ptr %arr, i64 %idx
+    %v = load i32, ptr %p
+    ret i32 %v
+  }
+
+  define i32 @two_ptrs(ptr %a, ptr %b) {
+  entry:
+    %x = load i32, ptr %a
+    %y = load i32, ptr %b
+    %z = add i32 %x, %y
+    ret i32 %z
+  }
+
+  define void @mix(ptr %p) {
+  entry:
+    %a = load i32, ptr %p
+    %b = add i32 %a, 10
+    store i32 %b, ptr %p
+    ret void
+  }
+...
+
+---
+# CHECK-LABEL: name: load_basic
+# CHECK: bb.0:
+# CHECK:   TEST64rr %0, %0
+# CHECK:   JCC_1 %bb.1, 4
+# CHECK: bb.2:
+# CHECK:   %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+# CHECK: bb.1:
+# CHECK:   TRAP
+name: load_basic
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: store_basic
+# CHECK: bb.0:
+# CHECK:   TEST64rr %0, %0
+# CHECK:   JCC_1 %bb.1, 4
+# CHECK: bb.2:
+# CHECK:   MOV32mr %0, 1, $noreg, 0, $noreg, %1
+# CHECK: bb.1:
+# CHECK:   TRAP
+name: store_basic
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi, $esi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = COPY $esi
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+
+---
+# CHECK-LABEL: name: gep_case
+# CHECK: bb.0:
+# CHECK:   TEST64rr %0, %0
+# CHECK:   JCC_1 %bb.1, 4
+# CHECK: bb.2:
+# CHECK:   %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+# CHECK: bb.1:
+# CHECK:   TRAP
+name: gep_case
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64_nosp = COPY $rsi
+    %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+    $eax = COPY %2
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: two_ptrs
+# CHECK: bb.0:
+# CHECK:   TEST64rr %0, %0
+# CHECK:   JCC_1 %bb.1, 4
+# CHECK: bb.2:
+# CHECK:   TEST64rr %1, %1
+# CHECK:   JCC_1 %bb.1, 4
+# CHECK: bb.1:
+# CHECK:   TRAP
+name: two_ptrs
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64 = COPY $rsi
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    $eax = COPY %4
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: mix
+# CHECK: bb.0:
+# CHECK:   TEST64rr %0, %0
+# CHECK:   JCC_1 %bb.1, 4
+# CHECK: bb.2:
+# CHECK:   TEST64rr %0, %0
+# CHECK:   JCC_1 %bb.1, 4
+# CHECK: bb.1:
+# CHECK:   TRAP
+name: mix
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %2:gr32 = ADD32ri %1, 10, implicit-def dead $eflags
+    MOV32mr %0, 1, $noreg, 0, $noreg, %2
+    RET 0

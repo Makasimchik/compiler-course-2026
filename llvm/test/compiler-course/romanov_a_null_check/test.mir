@@ -1,0 +1,321 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/romanov_a_null_check_BACKEND%shlibext \
+# RUN: -run-pass=null-checker-x86 %s -o - | FileCheck %s
+
+# int load_val4(int* p)          { return *p; }
+# void store_val4(int* p, int v) { *p = v; }
+
+# int load_val1(char* p)           { return *p; }
+# void store_val1(char* p, char v) { *p = v; }
+
+# int load_indexed(int* a, int i) { return a[i]; }
+# int load_two(int* a, int* b)    { return *a + *b; }
+# int load_same_twice(int* p)     { return p[0] + p[2]; }
+# int local_var()                 { int x = 42; return x; }
+
+# struct S { int a; int b; };
+# int load_field(struct S* s) { return s->b; }
+
+--- |
+  define i32 @load_val4(ptr %p) {
+    %1 = load i32, ptr %p
+    ret i32 %1
+  }
+
+  define void @store_val4(ptr %p, i32 %v) {
+    store i32 %v, ptr %p
+    ret void
+  }
+
+  define i8 @load_val1(ptr %p) {
+    %1 = load i8, ptr %p
+    ret i8 %1
+  }
+
+  define void @store_val1(ptr %p, i8 %v) {
+    store i8 %v, ptr %p
+    ret void
+  }
+
+  define i32 @load_indexed(ptr %a, i32 %i) {
+    %s = sext i32 %i to i64
+    %g = getelementptr i32, ptr %a, i64 %s
+    %1 = load i32, ptr %g
+    ret i32 %1
+  }
+
+  define i32 @load_two(ptr %a, ptr %b) {
+    %1 = load i32, ptr %a
+    %2 = load i32, ptr %b
+    %r = add i32 %1, %2
+    ret i32 %r
+  }
+
+  define i32 @load_same_twice(ptr %p) {
+    %1 = load i32, ptr %p
+    %g = getelementptr i32, ptr %p, i64 2
+    %2 = load i32, ptr %g
+    %r = add i32 %1, %2
+    ret i32 %r
+  }
+
+  define i32 @local_var() {
+    %x = alloca i32
+    store i32 42, ptr %x
+    %1 = load i32, ptr %x
+    ret i32 %1
+  }
+
+  %struct.S = type { i32, i32 }
+  define i32 @load_field(ptr %s) {
+    %g = getelementptr inbounds %struct.S, ptr %s, i32 0, i32 1
+    %1 = load i32, ptr %g
+    ret i32 %1
+  }
+
+  declare void @check_null(ptr)
+
+  define i32 @load_prechecked(ptr %p) {
+    call void @check_null(ptr %p)
+    %1 = load i32, ptr %p
+    ret i32 %1
+  }
+
+---
+# CHECK-LABEL: name: load_val4
+name: load_val4
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32rm %0
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: store_val4
+name: store_val4
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $esi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = COPY $esi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32mr %0
+
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+
+---
+# CHECK-LABEL: name: load_val1
+name: load_val1
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr8 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV8rm %0
+
+    %1:gr8 = MOV8rm %0, 1, $noreg, 0, $noreg
+    $al = COPY %1
+    RET 0, $al
+
+---
+# CHECK-LABEL: name: store_val1
+name: store_val1
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr8 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$sil', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $sil
+    %0:gr64 = COPY $rdi
+    %1:gr8 = COPY $sil
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV8mr %0
+
+    MOV8mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+
+---
+# CHECK-LABEL: name: load_indexed
+name: load_indexed
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr64_nosp }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $esi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = COPY $esi
+    %2:gr64_nosp = MOVSX64rr32 %1
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32rm %0, 4, killed %2
+
+    %3:gr32 = MOV32rm %0, 4, killed %2, 0, $noreg
+    $eax = COPY %3
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: load_two
+name: load_two
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+  - { id: 4, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64 = COPY $rsi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32rm %0
+    ; CHECK:      $rdi = COPY %1
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32rm %1
+
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    $eax = COPY %4
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: load_same_twice
+name: load_same_twice
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32rm %0, 1, $noreg, 0
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32rm %0, 1, $noreg, 8
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %2:gr32 = MOV32rm %0, 1, $noreg, 8, $noreg
+    %3:gr32 = ADD32rr %1, %2, implicit-def dead $eflags
+    $eax = COPY %3
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: local_var
+name: local_var
+tracksRegLiveness: true
+stack:
+  - { id: 0, size: 4, alignment: 4 }
+body: |
+  bb.0:
+    ; CHECK-NOT: check_null
+
+    MOV32mi %stack.0, 1, $noreg, 0, $noreg, 42
+    %0:gr32 = MOV32rm %stack.0, 1, $noreg, 0, $noreg
+    $eax = COPY %0
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: load_field
+name: load_field
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32rm %0, 1, $noreg, 4
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 4, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: load_prechecked
+name: load_prechecked
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32rm %0
+    ; CHECK-NOT:  CALL64pcrel32 {{.*}}check_null
+
+    $rdi = COPY %0
+    CALL64pcrel32 &check_null, implicit $rdi
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax

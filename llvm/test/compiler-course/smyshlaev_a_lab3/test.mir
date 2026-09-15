@@ -1,0 +1,282 @@
+# RUN: llc -load %llvmshlibdir/smyshlaev_a_lab3_BACKEND%pluginext -run-pass=x86-lab-unroll %s -o - | FileCheck %s
+
+--- |
+  define dso_local void @_Z4loopPii(ptr %a, i32 %n) {
+  entry:
+    %cmp3 = icmp sgt i32 %n, 0
+    br i1 %cmp3, label %for.body.preheader, label %for.cond.cleanup
+  for.body.preheader:
+    %wide.trip.count = zext nneg i32 %n to i64
+    br label %for.body
+  for.cond.cleanup:
+    ret void
+  for.body:
+    %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %for.body ]
+    %0 = shl nuw nsw i64 %indvars.iv, 2
+    %scevgep = getelementptr i8, ptr %a, i64 %0
+    %1 = load i32, ptr %scevgep
+    %add = add nsw i32 %1, 10
+    store i32 %add, ptr %scevgep
+    %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+    %exitcond.not = icmp eq i64 %wide.trip.count, %indvars.iv.next
+    br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+  }
+  
+  define dso_local void @_Z9no_unrollPii(ptr %a, i32 %n) {
+  entry:
+    %cmp8 = icmp sgt i32 %n, 0
+    br i1 %cmp8, label %for.body.preheader, label %for.cond.cleanup
+  for.body.preheader:
+    %wide.trip.count = zext nneg i32 %n to i64
+    br label %for.body
+  for.cond.cleanup:
+    ret void
+  for.body:
+    %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %for.inc ]
+    %0 = shl nuw nsw i64 %indvars.iv, 2
+    %scevgep = getelementptr i8, ptr %a, i64 %0
+    %1 = load i32, ptr %scevgep
+    %cmp1 = icmp sgt i32 %1, 0
+    br i1 %cmp1, label %if.then, label %for.inc
+  if.then:
+    %add = add nuw nsw i32 %1, 10
+    %sunkaddr = mul i64 %indvars.iv, 4
+    %sunkaddr1 = getelementptr i8, ptr %a, i64 %sunkaddr
+    store i32 %add, ptr %sunkaddr1
+    br label %for.inc
+  for.inc:
+    %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+    %exitcond.not = icmp eq i64 %wide.trip.count, %indvars.iv.next
+    br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+  }
+  
+  define dso_local void @_Z14complex_unrollPiS_S_i(ptr %a, ptr %b, ptr %c, i32 %n) {
+  entry:
+    %cmp16 = icmp sgt i32 %n, 0
+    br i1 %cmp16, label %for.body.preheader, label %for.cond.cleanup
+  for.body.preheader:
+    %wide.trip.count = zext nneg i32 %n to i64
+    br label %for.body
+  for.cond.cleanup:
+    ret void
+  for.body:
+    %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %for.body ]
+    %0 = shl nuw nsw i64 %indvars.iv, 2
+    %scevgep2 = getelementptr i8, ptr %a, i64 %0
+    %1 = load i32, ptr %scevgep2
+    %add = add nsw i32 %1, 10
+    %2 = shl nuw nsw i64 %indvars.iv, 2
+    %scevgep1 = getelementptr i8, ptr %b, i64 %2
+    %3 = load i32, ptr %scevgep1
+    %sub = sub i32 %add, %3
+    %4 = shl nuw nsw i64 %indvars.iv, 2
+    %scevgep = getelementptr i8, ptr %c, i64 %4
+    %5 = load i32, ptr %scevgep
+    %mul = mul nsw i32 %sub, %5
+    store i32 %mul, ptr %scevgep2
+    %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+    %exitcond.not = icmp eq i64 %wide.trip.count, %indvars.iv.next
+    br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+  }
+...
+
+# CHECK-LABEL: name: _Z4loopPii
+# CHECK: bb.3.for.body
+# CHECK: ADD32mi
+# CHECK: ADD32mi
+# CHECK: ADD32mi
+# CHECK: ADD32mi
+# CHECK: ADD32mi
+# CHECK: JCC_1
+
+---
+name:            _Z4loopPii
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64_nosp }
+  - { id: 2, class: gr64 }
+  - { id: 3, class: gr64 }
+  - { id: 4, class: gr32 }
+  - { id: 5, class: gr64 }
+  - { id: 6, class: gr32 }
+  - { id: 7, class: gr32 }
+  - { id: 8, class: gr64 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%3' }
+  - { reg: '$esi', virtual-reg: '%4' }
+body:             |
+  bb.0.entry:
+    successors: %bb.1, %bb.2
+    liveins: $rdi, $esi
+    %4:gr32 = COPY killed $esi
+    %3:gr64 = COPY killed $rdi
+    TEST32rr %4, %4, implicit-def $eflags
+    JCC_1 %bb.2, 14, implicit killed $eflags
+    JMP_1 %bb.1
+  
+  bb.1.for.body.preheader:
+    successors: %bb.3
+    %6:gr32 = MOV32rr killed %4
+    %0:gr64 = SUBREG_TO_REG 0, killed %6, %subreg.sub_32bit
+    %7:gr32 = MOV32r0 implicit-def dead $eflags
+    %5:gr64 = SUBREG_TO_REG 0, killed %7, %subreg.sub_32bit
+    JMP_1 %bb.3
+  
+  bb.2.for.cond.cleanup:
+    RET 0
+  
+  bb.3.for.body:
+    successors: %bb.2, %bb.3
+    %1:gr64_nosp = PHI %5, %bb.1, %2, %bb.3
+    ADD32mi %3, 4, %1, 0, $noreg, 10, implicit-def dead $eflags
+    %2:gr64 = nuw nsw INC64r killed %1, implicit-def dead $eflags
+    CMP64rr %0, %2, implicit-def $eflags
+    JCC_1 %bb.2, 4, implicit killed $eflags
+    JMP_1 %bb.3
+...
+
+# CHECK-LABEL: name: _Z9no_unrollPii
+# CHECK: bb.4.if.then
+# CHECK: ADD32ri
+# CHECK-NOT: ADD32ri
+# CHECK: bb.5.for.inc
+
+---
+name:            _Z9no_unrollPii
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64_nosp }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr64 }
+  - { id: 4, class: gr64 }
+  - { id: 5, class: gr32 }
+  - { id: 6, class: gr64 }
+  - { id: 7, class: gr32 }
+  - { id: 8, class: gr32 }
+  - { id: 9, class: gr32 }
+  - { id: 10, class: gr64 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%4' }
+  - { reg: '$esi', virtual-reg: '%5' }
+body:             |
+  bb.0.entry:
+    successors: %bb.1, %bb.2
+    liveins: $rdi, $esi
+    %5:gr32 = COPY killed $esi
+    %4:gr64 = COPY killed $rdi
+    TEST32rr %5, %5, implicit-def $eflags
+    JCC_1 %bb.2, 14, implicit killed $eflags
+    JMP_1 %bb.1
+  
+  bb.1.for.body.preheader:
+    successors: %bb.3
+    %7:gr32 = MOV32rr killed %5
+    %0:gr64 = SUBREG_TO_REG 0, killed %7, %subreg.sub_32bit
+    %8:gr32 = MOV32r0 implicit-def dead $eflags
+    %6:gr64 = SUBREG_TO_REG 0, killed %8, %subreg.sub_32bit
+    JMP_1 %bb.3
+  
+  bb.2.for.cond.cleanup:
+    RET 0
+  
+  bb.3.for.body:
+    successors: %bb.4, %bb.5
+    %1:gr64_nosp = PHI %6, %bb.1, %3, %bb.5
+    %2:gr32 = MOV32rm %4, 4, %1, 0, $noreg
+    TEST32rr %2, %2, implicit-def $eflags
+    JCC_1 %bb.5, 14, implicit killed $eflags
+    JMP_1 %bb.4
+  
+  bb.4.if.then:
+    successors: %bb.5
+    %9:gr32 = nuw nsw ADD32ri killed %2, 10, implicit-def dead $eflags
+    MOV32mr %4, 4, %1, 0, $noreg, killed %9
+  
+  bb.5.for.inc:
+    successors: %bb.2, %bb.3
+    %3:gr64 = nuw nsw INC64r killed %1, implicit-def dead $eflags
+    CMP64rr %0, %3, implicit-def $eflags
+    JCC_1 %bb.2, 4, implicit killed $eflags
+    JMP_1 %bb.3
+...
+
+# CHECK-LABEL: name: _Z14complex_unrollPiS_S_i
+# CHECK: bb.3.for.body
+# CHECK: SUB32rm
+# CHECK: ADD32ri
+# CHECK: IMUL32rm
+# CHECK: SUB32rm
+# CHECK: ADD32ri
+# CHECK: IMUL32rm
+# CHECK: SUB32rm
+# CHECK: ADD32ri
+# CHECK: IMUL32rm
+# CHECK: SUB32rm
+# CHECK: ADD32ri
+# CHECK: IMUL32rm
+# CHECK: SUB32rm
+# CHECK: ADD32ri
+# CHECK: IMUL32rm
+# CHECK: JCC_1
+
+---
+name:            _Z14complex_unrollPiS_S_i
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64_nosp }
+  - { id: 2, class: gr64 }
+  - { id: 3, class: gr64 }
+  - { id: 4, class: gr64 }
+  - { id: 5, class: gr64 }
+  - { id: 6, class: gr32 }
+  - { id: 7, class: gr64 }
+  - { id: 8, class: gr32 }
+  - { id: 9, class: gr32 }
+  - { id: 10, class: gr32 }
+  - { id: 11, class: gr32 }
+  - { id: 12, class: gr32 }
+  - { id: 13, class: gr32 }
+  - { id: 14, class: gr64 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%3' }
+  - { reg: '$rsi', virtual-reg: '%4' }
+  - { reg: '$rdx', virtual-reg: '%5' }
+  - { reg: '$ecx', virtual-reg: '%6' }
+body:             |
+  bb.0.entry:
+    successors: %bb.1, %bb.2
+    liveins: $rdi, $rsi, $rdx, $ecx
+    %6:gr32 = COPY killed $ecx
+    %5:gr64 = COPY killed $rdx
+    %4:gr64 = COPY killed $rsi
+    %3:gr64 = COPY killed $rdi
+    TEST32rr %6, %6, implicit-def $eflags
+    JCC_1 %bb.2, 14, implicit killed $eflags
+    JMP_1 %bb.1
+  
+  bb.1.for.body.preheader:
+    successors: %bb.3
+    %8:gr32 = MOV32rr killed %6
+    %0:gr64 = SUBREG_TO_REG 0, killed %8, %subreg.sub_32bit
+    %9:gr32 = MOV32r0 implicit-def dead $eflags
+    %7:gr64 = SUBREG_TO_REG 0, killed %9, %subreg.sub_32bit
+    JMP_1 %bb.3
+  
+  bb.2.for.cond.cleanup:
+    RET 0
+  
+  bb.3.for.body:
+    successors: %bb.2, %bb.3
+    %1:gr64_nosp = PHI %7, %bb.1, %2, %bb.3
+    %10:gr32 = MOV32rm %3, 4, %1, 0, $noreg
+    %11:gr32 = SUB32rm killed %10, %4, 4, %1, 0, $noreg, implicit-def dead $eflags
+    %12:gr32 = ADD32ri killed %11, 10, implicit-def dead $eflags
+    %13:gr32 = nsw IMUL32rm killed %12, %5, 4, %1, 0, $noreg, implicit-def dead $eflags
+    MOV32mr %3, 4, %1, 0, $noreg, killed %13
+    %2:gr64 = nuw nsw INC64r killed %1, implicit-def dead $eflags
+    CMP64rr %0, %2, implicit-def $eflags
+    JCC_1 %bb.2, 4, implicit killed $eflags
+    JMP_1 %bb.3

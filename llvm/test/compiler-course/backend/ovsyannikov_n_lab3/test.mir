@@ -1,0 +1,36 @@
+# RUN: llc -load %llvmshlibdir/ovsyannikov_n_lab3_BACKEND%pluginext -run-pass=ovsyannikov-inc-dec-merge %s -o - | FileCheck %s
+---
+name: test_extended_coverage
+body: |
+  bb.0:
+    ; CHECK: %0:gr32 = ADD32ri %0, 3
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+
+    ; CHECK: %1:gr64 = SUB64ri32 %1, 2
+    %1:gr64 = DEC64r %1, implicit-def dead $eflags
+    %1:gr64 = DEC64r %1, implicit-def dead $eflags
+
+    ; CHECK: %2:gr64 = ADD64ri32 %2, 1
+    %2:gr64 = INC64r %2, implicit-def dead $eflags
+    %2:gr64 = INC64r %2, implicit-def dead $eflags
+    %2:gr64 = DEC64r %2, implicit-def dead $eflags
+
+    ; CHECK: %3:gr32 = ADD32ri %3, 2
+    ; CHECK: %4:gr32 = MOV32rr %3
+    ; CHECK: %3:gr32 = SUB32ri %3, 1
+    %3:gr32 = INC32r %3, implicit-def dead $eflags
+    %3:gr32 = INC32r %3, implicit-def dead $eflags
+    %4:gr32 = MOV32rr %3
+    %3:gr32 = DEC32r %3, implicit-def dead $eflags
+
+    ; CHECK: %5:gr32 = ADD32ri %5, 2
+    ; CHECK: %6:gr32 = SUB32ri %6, 2
+    %5:gr32 = INC32r %5, implicit-def dead $eflags
+    %5:gr32 = INC32r %5, implicit-def dead $eflags
+    %6:gr32 = DEC32r %6, implicit-def dead $eflags
+    %6:gr32 = DEC32r %6, implicit-def dead $eflags
+
+    RET 0
+...

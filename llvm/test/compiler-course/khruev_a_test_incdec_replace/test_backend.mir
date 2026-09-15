@@ -1,0 +1,45 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/khruev_a_incdec_BACKEND%shlibext -run-pass=khruev_a_incdec_replace-x86 %s -o - | FileCheck %s
+
+---
+name:            fusion_tests_32_and_64
+alignment:       16
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr64 }
+  - { id: 3, class: gr64 }
+body:             |
+  bb.0:
+    ; ТЕСТ 1: Цепочка 32-bit INC (Должен быть ADD32ri, 3)
+    ; CHECK-LABEL: name: fusion_tests_32_and_64
+    ; CHECK: [[REG1:%[0-9]+]]:gr32 = IMPLICIT_DEF
+    ; CHECK-NEXT: [[REG2:%[0-9]+]]:gr32 = ADD32ri [[REG1]], 3
+    %0:gr32 = IMPLICIT_DEF
+    %10:gr32 = INC32r %0, implicit-def $eflags
+    %11:gr32 = INC32r %10, implicit-def $eflags
+    %1:gr32  = INC32r %11, implicit-def $eflags
+
+    ; ТЕСТ 2: Цепочка 64-bit DEC (Должен быть SUB64ri32, 2)
+    ; CHECK: [[REG3:%[0-9]+]]:gr64 = IMPLICIT_DEF
+    ; CHECK-NEXT: [[REG4:%[0-9]+]]:gr64 = SUB64ri32 [[REG3]], 2
+    %2:gr64 = IMPLICIT_DEF
+    %20:gr64 = DEC64r %2, implicit-def $eflags
+    %3:gr64  = DEC64r %20, implicit-def $eflags
+
+    ; ТЕСТ 3: INC + DEC = 0 на физических регистрах (Должны быть удалены, без ADD/SUB)
+    ; CHECK-NOT: ADD32ri
+    ; CHECK-NOT: SUB32ri
+    $eax = IMPLICIT_DEF
+    $eax = INC32r $eax, implicit-def $eflags
+    $eax = DEC32r $eax, implicit-def $eflags
+
+    ; ТЕСТ 4: Смешанная цепочка на физических регистрах (2 DEC, 1 INC -> SUB, 1)
+    ; CHECK: $rbx = SUB64ri32 $rbx, 1
+    ; CHECK-NEXT: RET64
+    $rbx = IMPLICIT_DEF
+    $rbx = DEC64r $rbx, implicit-def $eflags
+    $rbx = INC64r $rbx, implicit-def $eflags
+    $rbx = DEC64r $rbx, implicit-def $eflags
+
+    RET64

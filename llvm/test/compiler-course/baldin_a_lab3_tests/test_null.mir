@@ -1,0 +1,144 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/baldin_a_lab3_BACKEND%shlibext \
+# RUN: -run-pass=null-check-x86  %s -o - | FileCheck %s
+
+
+# -------------------------------------------------
+
+# Source files
+# test.cpp
+# int test_load(int* p) { return *p; }
+# void test_store(int* p, int val) { *p = val; }
+# int test_index(int* arr, int i) { return arr[i]; }
+# int test_double(int* a, int* b) { return *a + *b; }
+
+# -------------------------------------------------
+
+--- |
+  define i32 @_Z9test_loadPi(ptr %p) {
+  entry:
+    %0 = load i32, ptr %p
+    ret i32 %0
+  }
+  
+  define void @_Z10test_storePii(ptr %p, i32 %val) {
+  entry:
+    store i32 %val, ptr %p
+    ret void
+  }
+  
+  define i32 @_Z10test_indexPii(ptr %arr, i32 %i) {
+  entry:
+    %idx = sext i32 %i to i64
+    %p = getelementptr i32, ptr %arr, i64 %idx
+    %0 = load i32, ptr %p
+    ret i32 %0
+  }
+  
+  define i32 @_Z11test_doublePiS_(ptr %a, ptr %b) {
+  entry:
+    %v1 = load i32, ptr %a
+    %v2 = load i32, ptr %b
+    %res = add i32 %v1, %v2
+    ret i32 %res
+  }
+...
+---
+# CHECK-LABEL: name: _Z9test_loadPi
+name:            _Z9test_loadPi
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+---
+# CHECK-LABEL: name: _Z10test_storePii
+name:            _Z10test_storePii
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $esi
+    %1:gr32 = COPY $esi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+---
+# CHECK-LABEL: name: _Z10test_indexPii
+name:            _Z10test_indexPii
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr64_nosp }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $esi
+    %1:gr32 = COPY $esi
+    %0:gr64 = COPY $rdi
+    %2:gr64_nosp = MOVSX64rr32 %1
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+    ; CHECK-NEXT: %3:gr32 = MOV32rm %0, 4, killed %2, 0, $noreg
+    
+    %3:gr32 = MOV32rm %0, 4, killed %2, 0, $noreg
+    $eax = COPY %3
+    RET 0, $eax
+---
+# CHECK-LABEL: name: _Z11test_doublePiS_
+name:            _Z11test_doublePiS_
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $rsi
+    %1:gr64 = COPY $rsi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %1
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null{{.*}}
+    ; CHECK-NEXT: %3:gr32 = nsw ADD32rm %2, %0, 1, $noreg, 0, $noreg
+
+    %2:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %3:gr32 = nsw ADD32rm %2, %0, 1, $noreg, 0, $noreg, implicit-def dead $eflags
+    $eax = COPY %3
+    RET 0, $eax
+...

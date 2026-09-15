@@ -1,0 +1,128 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/function_inlining_BACKEND%shlibext -run-pass=function-inlining-backend %s -o - | FileCheck %s
+
+# CHECK-LABEL: name: large_caller
+# CHECK: CALL64pcrel32 @large_leaf
+# CHECK: RET64
+---
+name: large_leaf
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 1
+    %1:gr32 = ADD32ri %0, 1, implicit-def $eflags
+    %2:gr32 = ADD32ri %1, 2, implicit-def $eflags
+    %3:gr32 = ADD32ri %2, 3, implicit-def $eflags
+    %4:gr32 = ADD32ri %3, 4, implicit-def $eflags
+    %5:gr32 = ADD32ri %4, 5, implicit-def $eflags
+    %6:gr32 = ADD32ri %5, 6, implicit-def $eflags
+    %7:gr32 = ADD32ri %6, 7, implicit-def $eflags
+    %8:gr32 = ADD32ri %7, 8, implicit-def $eflags
+    %9:gr32 = ADD32ri %8, 9, implicit-def $eflags
+    %10:gr32 = ADD32ri %9, 10, implicit-def $eflags
+    %11:gr32 = ADD32ri %10, 11, implicit-def $eflags
+    %12:gr32 = ADD32ri %11, 12, implicit-def $eflags
+    %13:gr32 = ADD32ri %12, 13, implicit-def $eflags
+    %14:gr32 = ADD32ri %13, 14, implicit-def $eflags
+    %15:gr32 = ADD32ri %14, 15, implicit-def $eflags
+    $eax = COPY %15
+    RET64
+...
+---
+name: large_caller
+tracksRegLiveness: true
+body: |
+  bb.0:
+    CALL64pcrel32 @large_leaf, implicit-def $eax
+    RET64
+
+# CHECK-LABEL: name: recursive_entry
+# CHECK: XOR32ri
+# CHECK: XOR32ri
+# CHECK: XOR32ri
+# CHECK: CALL64pcrel32 @recursive_leaf
+# CHECK: RET64
+---
+name: recursive_leaf
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    %1:gr32 = XOR32ri %0, 255, implicit-def $eflags
+    $edi = COPY %1
+    CALL64pcrel32 @recursive_leaf, implicit $edi, implicit-def $eax
+    RET64
+...
+---
+name: recursive_entry
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    CALL64pcrel32 @recursive_leaf, implicit $edi, implicit-def $eax
+    RET64
+
+# CHECK-LABEL: name: small_caller
+# CHECK: SUB32ri
+# CHECK-NOT: CALL64pcrel32
+# CHECK: RET64
+---
+name: leaf_sub
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $esi
+    %0:gr32 = COPY $esi
+    %1:gr32 = SUB32ri %0, 7, implicit-def $eflags
+    $eax = COPY %1
+    RET64
+...
+---
+name: small_caller
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $esi
+    CALL64pcrel32 @leaf_sub, implicit $esi, implicit-def $eax
+    RET64
+
+# CHECK-LABEL: name: pipeline_start
+# CHECK: AND32ri
+# CHECK: OR32ri
+# CHECK: XOR32ri
+# CHECK-NOT: CALL64pcrel32
+# CHECK: RET64
+---
+name: stage_final
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    %1:gr32 = XOR32ri %0, 63, implicit-def $eflags
+    $eax = COPY %1
+    RET64
+...
+---
+name: stage_mid
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    %1:gr32 = OR32ri %0, 31, implicit-def $eflags
+    $edi = COPY %1
+    CALL64pcrel32 @stage_final, implicit $edi, implicit-def $eax
+    RET64
+...
+---
+name: pipeline_start
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    %1:gr32 = AND32ri %0, 15, implicit-def $eflags
+    $edi = COPY %1
+    CALL64pcrel32 @stage_mid, implicit $edi, implicit-def $eax
+    RET64

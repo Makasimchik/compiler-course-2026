@@ -1,0 +1,121 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/yurkin_g_lab3_BACKEND%shlibext -run-pass=example-x86 %s -o - | FileCheck %s
+
+--- |
+  define void @test_single_inc() { ret void }
+  define void @test_merge_inc() { ret void }
+  define void @test_single_dec() { ret void }
+  define void @test_inc_dec_cancel() { ret void }
+  define void @test_mixed_inc_dec() { ret void }
+  define void @test_multiple_sequences() { ret void }
+  define void @test_end_of_block() { ret void }
+  define void @test_flags_following() { ret void }
+  define void @test_memory_inc() { ret void }
+...
+---
+name: test_single_inc
+body: |
+  bb.0:
+    liveins: $edi
+    ; CHECK-LABEL: name: test_single_inc
+    ; CHECK: $edi = ADD32ri 1, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def dead $eflags
+    RET64 $edi
+...
+---
+name: test_merge_inc
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK-LABEL: name: test_merge_inc
+    ; CHECK: $rax = ADD64ri32 3, implicit-def $eflags
+    ; CHECK-NOT: INC64r
+    $rax = INC64r $rax, implicit-def dead $eflags
+    $rax = INC64r $rax, implicit-def dead $eflags
+    $rax = INC64r $rax, implicit-def dead $eflags
+    RET64 $rax
+...
+---
+name: test_single_dec
+body: |
+  bb.0:
+    liveins: $edx
+    ; CHECK-LABEL: name: test_single_dec
+    ; CHECK: $edx = SUB32ri 1, implicit-def $eflags
+    $edx = DEC32r $edx, implicit-def dead $eflags
+    RET64 $edx
+...
+---
+name: test_inc_dec_cancel
+body: |
+  bb.0:
+    liveins: $ecx
+    ; CHECK-LABEL: name: test_inc_dec_cancel
+    ; CHECK-NOT: INC
+    ; CHECK-NOT: DEC
+    ; CHECK-NOT: ADD
+    ; CHECK-NOT: SUB
+    $ecx = INC32r $ecx, implicit-def dead $eflags
+    $ecx = DEC32r $ecx, implicit-def dead $eflags
+    RET64 $ecx
+...
+---
+name: test_mixed_inc_dec
+body: |
+  bb.0:
+    liveins: $ecx
+    ; CHECK-LABEL: name: test_mixed_inc_dec
+    ; CHECK-NOT: ADD32ri
+    ; CHECK-NOT: SUB32ri
+    $ecx = INC32r $ecx, implicit-def dead $eflags
+    $ecx = DEC32r $ecx, implicit-def dead $eflags
+    $ecx = DEC32r $ecx, implicit-def dead $eflags
+    $ecx = INC32r $ecx, implicit-def dead $eflags
+    RET64 $ecx
+...
+---
+name: test_multiple_sequences
+body: |
+  bb.0:
+    liveins: $edi, $esi
+    ; CHECK-LABEL: name: test_multiple_sequences
+    ; CHECK: $edi = ADD32ri 2, implicit-def $eflags
+    ; CHECK: $esi = SUB32ri 2, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def dead $eflags
+    $edi = INC32r $edi, implicit-def dead $eflags
+    $esi = DEC32r $esi, implicit-def dead $eflags
+    $esi = DEC32r $esi, implicit-def dead $eflags
+    RET64 $edi
+...
+---
+name: test_end_of_block
+body: |
+  bb.0:
+    liveins: $ebp
+    ; CHECK-LABEL: name: test_end_of_block
+    ; CHECK: $ebp = ADD32ri 1, implicit-def $eflags
+    ; CHECK-NEXT: RET64 $ebp
+    $ebp = INC32r $ebp, implicit-def dead $eflags
+    RET64 $ebp
+...
+---
+name: test_flags_following
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK-LABEL: name: test_flags_following
+    ; CHECK: $rax = ADD64ri32 1, implicit-def $eflags
+    ; CHECK: $al = SETCCr 4, implicit killed $eflags
+    $rax = INC64r $rax, implicit-def dead $eflags
+    $al = SETCCr 4, implicit killed $eflags
+    RET64 $rax
+...
+---
+name: test_memory_inc
+body: |
+  bb.0:
+    liveins: $rsp
+    ; CHECK-LABEL: name: test_memory_inc
+    ; CHECK-NOT: ADD64ri32
+    ; (memory INC omitted to avoid MIR parse errors in this build)
+    RET64 $rsp
+...

@@ -1,0 +1,105 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu -load %llvmshlibdir/nikolaev_d_change_inc_dec_BACKEND%pluginext -run-pass=nikolaev-d-change-inc-dec-module -o - %s | FileCheck %s
+
+--- |
+  define void @test_single_inc() { ret void }
+  define void @test_merge_inc() { ret void }
+  define void @test_single_dec() { ret void }
+  define void @test_no_merge_different_regs() { ret void }
+  define void @test_mixed_types() { ret void }
+  define void @test_mixed_inc_dec() { ret void }
+  define void @test_multiple_sequences_in_block() { ret void }
+  define void @test_end_of_block() { ret void }
+...
+---
+name: test_single_inc
+body: |
+  bb.0:
+    liveins: $edi
+    ; CHECK-LABEL: name: test_single_inc
+    ; CHECK: $edi = ADD32ri8 $edi, 1, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def dead $eflags
+    RET64 $edi
+...
+---
+name: test_merge_inc
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK-LABEL: name: test_merge_inc
+    ; CHECK: $rax = ADD64ri8 $rax, 3, implicit-def $eflags
+    ; CHECK-NOT: INC64r
+    $rax = INC64r $rax, implicit-def dead $eflags
+    $rax = INC64r $rax, implicit-def dead $eflags
+    $rax = INC64r $rax, implicit-def dead $eflags
+    RET64 $rax
+...
+---
+name: test_single_dec
+body: |
+  bb.0:
+    liveins: $edx
+    ; CHECK-LABEL: name: test_single_dec
+    ; CHECK: $edx = SUB32ri8 $edx, 1, implicit-def $eflags
+    $edx = DEC32r $edx, implicit-def dead $eflags
+    RET64 $edx
+...
+---
+name: test_no_merge_different_regs
+body: |
+  bb.0:
+    liveins: $eax, $ebx
+    ; CHECK-LABEL: name: test_no_merge_different_regs
+    ; CHECK: $eax = ADD32ri8 $eax, 1, implicit-def $eflags
+    ; CHECK: $ebx = ADD32ri8 $ebx, 1, implicit-def $eflags
+    $eax = INC32r $eax, implicit-def dead $eflags
+    $ebx = INC32r $ebx, implicit-def dead $eflags
+    RET64 $eax
+...
+---
+name: test_mixed_types
+body: |
+  bb.0:
+    liveins: $eax, $rax
+    ; CHECK-LABEL: name: test_mixed_types
+    ; CHECK: $eax = ADD32ri8 $eax, 1, implicit-def $eflags
+    ; CHECK: $rax = ADD64ri8 $rax, 1, implicit-def $eflags
+    $eax = INC32r $eax, implicit-def dead $eflags
+    $rax = INC64r $rax, implicit-def dead $eflags
+    RET64 $rax
+...
+---
+name: test_mixed_inc_dec
+body: |
+  bb.0:
+    liveins: $ecx
+    ; CHECK-LABEL: name: test_mixed_inc_dec
+    ; CHECK: $ecx = ADD32ri8 $ecx, 1, implicit-def $eflags
+    ; CHECK: $ecx = SUB32ri8 $ecx, 1, implicit-def $eflags
+    $ecx = INC32r $ecx, implicit-def dead $eflags
+    $ecx = DEC32r $ecx, implicit-def dead $eflags
+    RET64 $ecx
+...
+---
+name: test_multiple_sequences_in_block
+body: |
+  bb.0:
+    liveins: $edi, $esi
+    ; CHECK-LABEL: name: test_multiple_sequences_in_block
+    ; CHECK: $edi = ADD32ri8 $edi, 2, implicit-def $eflags
+    ; CHECK: $esi = SUB32ri8 $esi, 2, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def dead $eflags
+    $edi = INC32r $edi, implicit-def dead $eflags
+    $esi = DEC32r $esi, implicit-def dead $eflags
+    $esi = DEC32r $esi, implicit-def dead $eflags
+    RET64 $edi
+...
+---
+name: test_end_of_block
+body: |
+  bb.0:
+    liveins: $ebp
+    ; CHECK-LABEL: name: test_end_of_block
+    ; CHECK: $ebp = ADD32ri8 $ebp, 1, implicit-def $eflags
+    ; CHECK-NEXT: RET64 $ebp
+    $ebp = INC32r $ebp, implicit-def dead $eflags
+    RET64 $ebp

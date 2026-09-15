@@ -1,0 +1,118 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/gutyansky_a_lab3_BACKEND%shlibext \
+# RUN: -run-pass=gutyansky-a-null-check-x86 %s -o - | FileCheck %s
+
+# CHECK-LABEL: name: _Z12single_derefPi
+# CHECK:         $rdi = COPY $rdi
+# CHECK-NEXT:    CALL64pcrel32 &check_null
+# CHECK-NEXT:    $eax = MOV32rm $rdi
+---
+name:            _Z12single_derefPi
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi' }
+body:             |
+  bb.0:
+    liveins: $rdi
+  
+    $eax = MOV32rm $rdi, 1, $noreg, 0, $noreg
+    RET64 $eax
+...
+
+# CHECK-LABEL: name: _Z10load_storePii
+# CHECK: $rdi = COPY $rdi
+# CHECK-NEXT: CALL64pcrel32 &check_null
+# CHECK-NEXT: $eax = MOV32rm $rdi
+# CHECK: $rdi = COPY $rdi
+# CHECK-NEXT: CALL64pcrel32 &check_null
+# CHECK-NEXT: MOV32mr $rdi
+---
+name:            _Z10load_storePii
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi' }
+  - { reg: '$esi' }
+body:             |
+  bb.0:
+    liveins: $esi, $rdi
+  
+    $eax = MOV32rm $rdi, 1, $noreg, 0, $noreg
+    MOV32mr $rdi, 1, $noreg, 0, $noreg, $esi
+    RET64 $eax
+...
+
+# CHECK-LABEL: name: _Z14multiple_derefPiS_S_
+# CHECK:         $rdi = COPY $rdi
+# CHECK-NEXT:    CALL64pcrel32 &check_null
+# CHECK-NEXT:    $ecx = MOV32rm $rdi
+# CHECK:         $rdi = COPY $rsi
+# CHECK-NEXT:    CALL64pcrel32 &check_null
+# CHECK-NEXT:    $esi = MOV32rm $rsi
+# CHECK:         $rdi = COPY $rdx
+# CHECK-NEXT:    CALL64pcrel32 &check_null
+# CHECK-NEXT:    $eax = MOV32rm $rdx
+---
+name:            _Z14multiple_derefPiS_S_
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi' }
+  - { reg: '$rsi' }
+  - { reg: '$rdx' }
+body:             |
+  bb.0:
+    liveins: $rdi, $rdx, $rsi
+  
+    $ecx = MOV32rm $rdi, 1, $noreg, 0, $noreg
+    $esi = MOV32rm $rsi, 1, $noreg, 0, $noreg
+    $eax = MOV32rm $rdx, 1, $noreg, 0, $noreg
+    $ecx = nsw IMUL32rr $ecx, $ecx, implicit-def dead $eflags
+    $esi = nsw IMUL32rr $esi, $esi, implicit-def dead $eflags
+    $esi = nuw nsw ADD32rr $esi, $ecx, implicit-def dead $eflags
+    $eax = nsw IMUL32rr $eax, $eax, implicit-def dead $eflags
+    $eax = nuw nsw ADD32rr $eax, $esi, implicit-def dead $eflags
+    RET64 $eax
+...
+
+# CHECK-LABEL: name: _Z13pointer_arithPiii
+# CHECK:         $rax = MOVSX64rr32 $esi
+# CHECK-NEXT:    $rdi = COPY $rdi
+# CHECK-NEXT:    CALL64pcrel32 &check_null
+# CHECK-NEXT:    MOV32mr $rdi
+---
+name:            _Z13pointer_arithPiii
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi' }
+  - { reg: '$esi' }
+  - { reg: '$edx' }
+body:             |
+  bb.0:
+    liveins: $edx, $esi, $rdi
+  
+    $rax = MOVSX64rr32 $esi
+    MOV32mr $rdi, 4, $rax, 0, $noreg, $edx
+    RET64
+...
+
+# CHECK-LABEL: name: no_double_check
+# CHECK:         $rax = MOVSX64rr32 $esi
+# CHECK-NEXT:    $rdi = COPY $rdi
+# CHECK-NEXT:    CALL64pcrel32 &check_null
+# CHECK-NEXT:    MOV32mr $rdi
+---
+name:            no_double_check
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi' }
+  - { reg: '$esi' }
+  - { reg: '$edx' }
+body:             |
+  bb.0:
+    liveins: $edx, $esi, $rdi
+  
+    $rax = MOVSX64rr32 $esi
+    $rdi = COPY $rdi
+    CALL64pcrel32 &check_null, implicit $rsp, implicit $ssp
+    MOV32mr $rdi, 4, $rax, 0, $noreg, $edx
+    RET64
+...
+

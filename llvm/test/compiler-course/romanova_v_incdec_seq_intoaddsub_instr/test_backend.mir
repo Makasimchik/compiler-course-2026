@@ -1,0 +1,46 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/romanova_v_incdec_seq_into_addsub_instr_BACKEND%shlibext \
+# RUN: -run-pass=incdec-to-addsub-x86 %s -o - | FileCheck %s
+
+--- |
+  define dso_local i32 @main() {
+    ret i32 0
+  }
+
+...
+---
+# CHECK-LABEL: name:            main
+# CHECK: renamable $eax = ADD32ri 1, implicit-def $eflags
+# CHECK: renamable $ebx = ADD32ri 1, implicit-def $eflags
+# CHECK: renamable $ebx = SUB32ri 2, implicit-def $eflags
+# CHECK-NOT: INC32r
+# CHECK-NOT: DEC32r
+
+name:            main
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $eax, $ebx
+    
+    $eax = MOV32ri 0
+    $ebx = MOV32ri 0
+    
+    ; a++ a-- a++ -> a += 1
+    renamable $eax = INC32r $eax, implicit-def $eflags
+    renamable $eax = DEC32r $eax, implicit-def $eflags
+    renamable $eax = INC32r $eax, implicit-def $eflags
+    
+    ; b++ -> b += 1
+    renamable $ebx = INC32r $ebx, implicit-def $eflags
+    
+    ; a-- a++ -> 
+    renamable $eax = DEC32r $eax, implicit-def $eflags
+    renamable $eax = INC32r $eax, implicit-def $eflags
+    
+    ; b-- b-- b++ b-- -> b -= 2
+    renamable $ebx = DEC32r $ebx, implicit-def $eflags
+    renamable $ebx = DEC32r $ebx, implicit-def $eflags
+    renamable $ebx = INC32r $ebx, implicit-def $eflags
+    renamable $ebx = DEC32r $ebx, implicit-def $eflags
+    
+    $eax = MOV32ri 0
+    RET64

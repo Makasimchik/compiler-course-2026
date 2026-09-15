@@ -1,0 +1,73 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/goriacheva_k_insert_a_null_check_BACKEND%shlibext \
+# RUN:   -run-pass=null-check-x86 %s -o - | FileCheck %s
+
+---
+# =========================
+# 1. Нет работы с памятью
+# =========================
+# CHECK-LABEL: name: no_mem
+# CHECK-NOT: TEST64rr
+# CHECK-NOT: JCC_1
+
+name: no_mem
+body: |
+  bb.0:
+    $rax = MOV64ri 42
+    RET64 $rax
+...
+
+---
+# =========================
+# 2. Load -> должна быть проверка
+# =========================
+# CHECK-LABEL: name: load_test
+# CHECK: TEST64rr
+# CHECK-NEXT: JCC_1
+# CHECK: MOV64rm
+
+name: load_test
+body: |
+  bb.0:
+    liveins: $rdi
+
+    $rax = MOV64rm $rdi, 1, $noreg, 0, $noreg
+    RET64 $rax
+...
+
+---
+# =========================
+# 3. Store -> должна быть проверка
+# =========================
+# CHECK-LABEL: name: store_test
+# CHECK: TEST64rr
+# CHECK-NEXT: JCC_1
+# CHECK: MOV64mr
+
+name: store_test
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+
+    MOV64mr $rdi, 1, $noreg, 0, $noreg, $rsi
+    RET64
+...
+
+---
+# =========================
+# 4. Несколько memory-инструкций
+# =========================
+# CHECK-LABEL: name: multiple_mem
+# CHECK: TEST64rr
+# CHECK: MOV64rm
+# CHECK: TEST64rr
+# CHECK: MOV64mr
+
+name: multiple_mem
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+
+    $rax = MOV64rm $rdi, 1, $noreg, 0, $noreg
+    MOV64mr $rsi, 1, $noreg, 0, $noreg, $rax
+    RET64 $rax
+...

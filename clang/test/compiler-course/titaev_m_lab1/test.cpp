@@ -12,12 +12,13 @@ extern "C" {
 // Дополнительное задание:
 // warning должен появляться только для определения функции,
 // в имени которой содержится "deprecated".
+
 void deprecated_declared_only();
 
 void deprecated_function() {} // expected-warning {{function 'deprecated_function' contains 'deprecated' in its name}}
 
 int my_deprecated_api(int value) { // expected-warning {{function 'my_deprecated_api' contains 'deprecated' in its name}}
-    return value;
+  return value;
 }
 
 void normal_function() {}

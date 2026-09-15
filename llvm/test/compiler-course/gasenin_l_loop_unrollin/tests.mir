@@ -1,0 +1,409 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu \
+# RUN:     --load=%llvmshlibdir/gasenin_l_loop_unrollin_BACKEND%shlibext \
+# RUN:     -run-pass=example-x86 \
+# RUN:     %s -o - | FileCheck %s
+
+--- |
+  define void @no_loop(i32 %arg) local_unnamed_addr {
+    %2 = and i32 %arg, 1
+    %3 = icmp eq i32 %2, 0
+    ret void
+  }
+
+  define void @simple_loop(i32 %arg) local_unnamed_addr {
+  entry:   br label %loop
+  loop:
+    %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+    %i.next = add i32 %i, 1
+    %cond = icmp slt i32 %i.next, 8
+    br i1 %cond, label %loop, label %exit
+  exit:    ret void
+  }
+
+  define void @nested_loop(i32 %arg) local_unnamed_addr {
+  outer_entry:  br label %outer_loop
+  outer_loop:
+    %j = phi i32 [ 0, %outer_entry ], [ %j.next, %outer_latch ]
+    br label %inner_loop
+  inner_loop:
+    %i = phi i32 [ 0, %outer_loop ], [ %i.next, %inner_loop ]
+    %i.next = add i32 %i, 1
+    %icond = icmp slt i32 %i.next, 4
+    br i1 %icond, label %inner_loop, label %outer_latch
+  outer_latch:
+    %j.next = add i32 %j, 1
+    %jcond = icmp slt i32 %j.next, 2
+    br i1 %jcond, label %outer_loop, label %outer_exit
+  outer_exit:   ret void
+  }
+
+  define void @no_preheader(i1 %flag) local_unnamed_addr {
+  entry0:  br i1 %flag, label %entry1, label %loop
+  entry1:  br label %loop
+  loop:
+    %i = phi i32 [ 0, %entry0 ], [ 0, %entry1 ], [ %i.next, %loop ]
+    %i.next = add i32 %i, 1
+    %cond = icmp slt i32 %i.next, 8
+    br i1 %cond, label %loop, label %exit
+  exit:    ret void
+  }
+
+  define void @large_trip() local_unnamed_addr {
+  entry:   br label %loop
+  loop:
+    %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+    %i.next = add i32 %i, 1
+    %cond = icmp slt i32 %i.next, 2000
+    br i1 %cond, label %loop, label %exit
+  exit:    ret void
+  }
+
+  define void @non_divisible(i32 %arg) local_unnamed_addr {
+  entry:   br label %loop
+  loop:
+    %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+    %i.next = add i32 %i, 1
+    %cond = icmp slt i32 %i.next, 6
+    br i1 %cond, label %loop, label %exit
+  exit:    ret void
+  }
+
+  define void @complex_body() local_unnamed_addr {
+  entry:   br label %header
+  header:
+    %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+    %cond = icmp slt i32 %i, 8
+    br i1 %cond, label %body_a, label %exit
+  body_a:  br label %body_b
+  body_b:  br label %body_c
+  body_c:  br label %body_d
+  body_d:  br label %latch
+  latch:
+    %i.next = add i32 %i, 1
+    br label %header
+  exit:    ret void
+  }
+
+  define void @dynamic_trip(i32 %n) local_unnamed_addr {
+  entry:   br label %loop
+  loop:
+    %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+    %i.next = add i32 %i, 1
+    %cond = icmp slt i32 %i.next, %n
+    br i1 %cond, label %loop, label %exit
+  exit:    ret void
+  }
+
+  define void @prime_trip() local_unnamed_addr {
+  entry:   br label %loop
+  loop:
+    %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+    %i.next = add i32 %i, 1
+    %cond = icmp slt i32 %i.next, 7
+    br i1 %cond, label %loop, label %exit
+  exit:    ret void
+  }
+
+...
+
+# ── Тест 1: функция без цикла ─────────────────────────────────────────────────
+---
+# CHECK-LABEL: name: no_loop
+# CHECK:      TEST8ri renamable $dil, 1, implicit-def $eflags, implicit killed $edi
+# CHECK-NEXT: renamable $al = SETCCr 4, implicit killed $eflags
+# CHECK-NEXT: RET64 $al
+
+name:            no_loop
+tracksRegLiveness: true
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    liveins: $edi
+    TEST8ri renamable $dil, 1, implicit-def $eflags, implicit killed $edi
+    renamable $al = SETCCr 4, implicit killed $eflags
+    RET64 $al
+
+...
+
+# ── Тест 2: простой цикл (trip=8, factor=4) ───────────────────────────────────
+# Каждая копия содержит полное тело, включая маркер CMP32rr.
+# После развёртки на 4: CMP32rr встречается ровно 4 раза.
+---
+# CHECK-LABEL: name: simple_loop
+# CHECK-COUNT-4: CMP32rr
+
+name:            simple_loop
+tracksRegLiveness: false
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    $ecx = MOV32ri 0
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x04000000), %bb.1(0x7c000000)
+    CMP32rr $ecx, $edi, implicit-def dead $eflags
+    $ecx = ADD32ri8 $ecx, 1, implicit-def dead $eflags
+    CMP32ri8 $ecx, 8, implicit-def $eflags
+    JCC_1 %bb.2, 13, implicit killed $eflags
+    JMP_1 %bb.1
+
+  bb.2:
+    RET64
+
+...
+
+# ── Тест 3: вложенные циклы (inner trip=4, outer trip=2) ─────────────────────
+# inner разворачивается первым: MOVZX32rr8 ×4.
+# outer разворачивается: CMP32rr ×2.
+---
+# CHECK-LABEL: name: nested_loop
+# CHECK-COUNT-4: MOVZX32rr8
+# CHECK-COUNT-2: CMP32rr
+
+name:            nested_loop
+tracksRegLiveness: false
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    $ecx = MOV32ri 0
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    CMP32rr $ecx, $edi, implicit-def dead $eflags
+    $edx = MOV32ri 0
+    JMP_1 %bb.2
+
+  bb.2:
+    successors: %bb.3(0x04000000), %bb.2(0x7c000000)
+    $esi = MOVZX32rr8 $dl
+    $edx = ADD32ri8 $edx, 1, implicit-def dead $eflags
+    CMP32ri8 $edx, 4, implicit-def $eflags
+    JCC_1 %bb.3, 13, implicit killed $eflags
+    JMP_1 %bb.2
+
+  bb.3:
+    successors: %bb.4(0x04000000), %bb.1(0x7c000000)
+    $ecx = ADD32ri8 $ecx, 1, implicit-def dead $eflags
+    CMP32ri8 $ecx, 2, implicit-def $eflags
+    JCC_1 %bb.4, 13, implicit killed $eflags
+    JMP_1 %bb.1
+
+  bb.4:
+    RET64
+
+...
+
+# ── Тест 4: нет уникального preheader → не разворачивается ───────────────────
+# TEST32rr — маркер; цикл пропускается → ровно 1 вхождение.
+---
+# CHECK-LABEL: name: no_preheader
+# CHECK-COUNT-1: TEST32rr
+# CHECK-NOT: TEST32rr
+
+name:            no_preheader
+tracksRegLiveness: false
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    $ecx = MOV32ri 0
+    TEST8ri $dil, 1, implicit-def $eflags, implicit $edi
+    JCC_1 %bb.1, 5, implicit killed $eflags
+    JMP_1 %bb.2
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    $ecx = MOV32ri 0
+    JMP_1 %bb.2
+
+  bb.2:
+    successors: %bb.3(0x04000000), %bb.2(0x7c000000)
+    TEST32rr $ecx, $edi, implicit-def dead $eflags
+    $ecx = ADD32ri8 $ecx, 1, implicit-def dead $eflags
+    CMP32ri8 $ecx, 8, implicit-def $eflags
+    JCC_1 %bb.3, 13, implicit killed $eflags
+    JMP_1 %bb.2
+
+  bb.3:
+    RET64
+
+...
+
+# ── Тест 5: trip count 2000 > MAX_TRIP_COUNT=1024 → не разворачивается ────────
+# IMUL32rri8 — маркер; цикл пропускается → ровно 1 вхождение.
+---
+# CHECK-LABEL: name: large_trip
+# CHECK-COUNT-1: IMUL32rri8
+# CHECK-NOT: IMUL32rri8
+
+name:            large_trip
+tracksRegLiveness: false
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    $ecx = MOV32ri 0
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x04000000), %bb.1(0x7c000000)
+    $eax = IMUL32rri8 $ecx, 7, implicit-def dead $eflags
+    $ecx = ADD32ri8 $ecx, 1, implicit-def dead $eflags
+    CMP32ri $ecx, 2000, implicit-def $eflags
+    JCC_1 %bb.2, 13, implicit killed $eflags
+    JMP_1 %bb.1
+
+  bb.2:
+    RET64
+
+...
+
+# ── Тест 6: trip=6, F=4→3 (наибольший делитель ≤ 4 равен 3) ─────────────────
+# CMP32rr — маркер; loop-condition: CMP32ri8 (другой опкод).
+# После развёртки на 3: CMP32rr ×3.
+---
+# CHECK-LABEL: name: non_divisible
+# CHECK-COUNT-3: CMP32rr
+
+name:            non_divisible
+tracksRegLiveness: false
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    $ecx = MOV32ri 0
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x04000000), %bb.1(0x7c000000)
+    CMP32rr $ecx, $edi, implicit-def dead $eflags
+    $ecx = ADD32ri8 $ecx, 1, implicit-def dead $eflags
+    CMP32ri8 $ecx, 6, implicit-def $eflags
+    JCC_1 %bb.2, 13, implicit killed $eflags
+    JMP_1 %bb.1
+
+  bb.2:
+    RET64
+
+...
+
+# ── Тест 7: 6 блоков > MAX_LOOP_BLOCKS нет, но нет ExitingBlock → не разворачивается
+# Cтруктура: header с условным выходом, 4 body-блока, latch — итого 6 блоков.
+# getExitingBlock() вернёт null (несколько блоков могут выходить).
+# TEST32rr — маркер → ровно 1 вхождение.
+---
+# CHECK-LABEL: name: complex_body
+# CHECK-COUNT-1: TEST32rr
+# CHECK-NOT: TEST32rr
+
+name:            complex_body
+tracksRegLiveness: false
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    $ecx = MOV32ri 0
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x7c000000), %bb.6(0x04000000)
+    CMP32ri8 $ecx, 8, implicit-def $eflags
+    JCC_1 %bb.6, 13, implicit killed $eflags
+    JMP_1 %bb.2
+
+  bb.2:
+    successors: %bb.3(0x80000000)
+    TEST32rr $ecx, $edi, implicit-def dead $eflags
+    JMP_1 %bb.3
+
+  bb.3:
+    successors: %bb.4(0x80000000)
+    CMP32rr $ecx, $edi, implicit-def dead $eflags
+    JMP_1 %bb.4
+
+  bb.4:
+    successors: %bb.5(0x80000000)
+    $eax = MOV32rr $ecx
+    JMP_1 %bb.5
+
+  bb.5:
+    successors: %bb.1(0x80000000)
+    $ecx = ADD32ri8 $ecx, 1, implicit-def dead $eflags
+    JMP_1 %bb.1
+
+  bb.6:
+    RET64
+
+...
+
+# ── Тест 8: CMP32rr (динамический trip count) → не разворачивается ────────────
+# MOV32rr — маркер; нет CMP с immediate → getTripCount() == nullopt.
+---
+# CHECK-LABEL: name: dynamic_trip
+# CHECK-COUNT-1: MOV32rr
+# CHECK-NOT: MOV32rr
+
+name:            dynamic_trip
+tracksRegLiveness: false
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    $ecx = MOV32ri 0
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x04000000), %bb.1(0x7c000000)
+    $eax = MOV32rr $ecx
+    $ecx = ADD32ri8 $ecx, 1, implicit-def dead $eflags
+    CMP32rr $ecx, $edi, implicit-def $eflags
+    JCC_1 %bb.2, 13, implicit killed $eflags
+    JMP_1 %bb.1
+
+  bb.2:
+    RET64
+
+...
+
+# ── Тест 9: trip=7 (простое число, нет делителей ≤ 4) → не разворачивается ────
+# Алгоритм: F=4→7%4≠0, F=3→7%3≠0, F=2→7%2≠0, F=1→return false.
+# MOV32rr — маркер → ровно 1 вхождение.
+---
+# CHECK-LABEL: name: prime_trip
+# CHECK-COUNT-1: MOV32rr
+# CHECK-NOT: MOV32rr
+
+name:            prime_trip
+tracksRegLiveness: false
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    $ecx = MOV32ri 0
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x04000000), %bb.1(0x7c000000)
+    $eax = MOV32rr $ecx
+    $ecx = ADD32ri8 $ecx, 1, implicit-def dead $eflags
+    CMP32ri8 $ecx, 7, implicit-def $eflags
+    JCC_1 %bb.2, 13, implicit killed $eflags
+    JMP_1 %bb.1
+
+  bb.2:
+    RET64
+
+...

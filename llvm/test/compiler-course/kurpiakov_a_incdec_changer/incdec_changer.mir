@@ -1,0 +1,115 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/kurpiakov_a_incdec_change_BACKEND%shlibext \
+# RUN: -run-pass=incdec-changer-x86 %s -o - | FileCheck %s
+
+# пришлось искусственно генерировать mir файл, из-за того, что компилятор выполнял 
+# работы пасса самостоятельно с любым расширением (-01 -02 -03).
+# с -O0 код даже не содержал функций инкрементирования 
+
+# так же в mir файле были оставлены только проверяемые FileCheck-ом части, остальной код 
+# тоже генерируется, но не несет никакого смысла в данной задаче (все выводится в консоль)
+
+
+# Source files
+# test.cpp
+# short ShortConv(short x1) noexcept { x1++; ++x1; x1--; return x1; }
+# char CharConv(char x2) noexcept { x2++; x2++; x2++; ++x2; return x2; }
+# int IntConv(int x3) noexcept { x3--; --x3; --x3; return x3; }
+# long LongConv(long x4) noexcept { x4++; x4--; --x4; ++x4; return x4; }
+
+--- |
+  ; ModuleID = 'test.ll'
+  source_filename = "test.cpp"
+  target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+  target triple = "x86_64-unknown-linux-gnu"
+
+  define dso_local noundef signext i16 @_Z9ShortConvs(i16 noundef signext %0) local_unnamed_addr {
+    %2 = add i16 %0, 1
+    ret i16 %2
+  }
+
+  define dso_local noundef signext i8 @_Z8CharConvc(i8 noundef signext %0) local_unnamed_addr {
+    %2 = add i8 %0, 4
+    ret i8 %2
+  }
+
+  define dso_local noundef i32 @_Z7IntConvi(i32 noundef %0) local_unnamed_addr {
+    %2 = add nsw i32 %0, -3
+    ret i32 %2
+  }
+
+  define dso_local noundef i64 @_Z8LongConvl(i64 noundef %0) local_unnamed_addr {
+    ret i64 %0
+  }
+
+...
+---
+# CHECK-LABEL: name:            _Z9ShortConvs
+# CHECK: renamable $ax = ADD16ri killed renamable $ax, 2, implicit-def dead $eflags
+# CHECK: renamable $ax = SUB16ri killed renamable $ax, 1, implicit-def dead $eflags
+# CHECK-NOT: INC16r
+# CHECK-NOT: DEC16r
+name:            _Z9ShortConvs
+alignment:       16
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    renamable $ax = IMPLICIT_DEF
+    renamable $ax = INC16r killed renamable $ax, implicit-def dead $eflags
+    renamable $ax = INC16r killed renamable $ax, implicit-def dead $eflags
+    renamable $ax = DEC16r killed renamable $ax, implicit-def dead $eflags
+    RET 0, $ax
+
+...
+---
+# CHECK-LABEL: name:            _Z8CharConvc
+# CHECK: renamable $al = ADD8ri killed renamable $al, 4, implicit-def dead $eflags
+# CHECK-NOT: INC8r
+# CHECK-NOT: DEC8r
+name:            _Z8CharConvc
+alignment:       16
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    renamable $al = IMPLICIT_DEF
+    renamable $al = INC8r killed renamable $al, implicit-def dead $eflags
+    renamable $al = INC8r killed renamable $al, implicit-def dead $eflags
+    renamable $al = INC8r killed renamable $al, implicit-def dead $eflags
+    renamable $al = INC8r killed renamable $al, implicit-def dead $eflags
+    RET 0, $al
+
+...
+---
+# CHECK-LABEL: name:            _Z7IntConvi
+# CHECK: renamable $eax = SUB32ri killed renamable $eax, 3, implicit-def dead $eflags
+# CHECK-NOT: INC32r
+# CHECK-NOT: DEC32r
+name:            _Z7IntConvi
+alignment:       16
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    renamable $eax = IMPLICIT_DEF
+    renamable $eax = DEC32r killed renamable $eax, implicit-def dead $eflags
+    renamable $eax = DEC32r killed renamable $eax, implicit-def dead $eflags
+    renamable $eax = DEC32r killed renamable $eax, implicit-def dead $eflags
+    RET 0, $eax
+
+...
+---
+# CHECK-LABEL: name:            _Z8LongConvl
+# CHECK: renamable $rax = ADD64ri32 killed renamable $rax, 1, implicit-def dead $eflags
+# CHECK: renamable $rax = SUB64ri32 killed renamable $rax, 2, implicit-def dead $eflags
+# CHECK: renamable $rax = ADD64ri32 killed renamable $rax, 1, implicit-def dead $eflags
+# CHECK-NOT: INC64r
+# CHECK-NOT: DEC64r
+name:            _Z8LongConvl
+alignment:       16
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    renamable $rax = IMPLICIT_DEF
+    renamable $rax = INC64r killed renamable $rax, implicit-def dead $eflags
+    renamable $rax = DEC64r killed renamable $rax, implicit-def dead $eflags
+    renamable $rax = DEC64r killed renamable $rax, implicit-def dead $eflags
+    renamable $rax = INC64r killed renamable $rax, implicit-def dead $eflags
+    RET 0, $rax

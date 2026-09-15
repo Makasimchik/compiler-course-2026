@@ -1,0 +1,149 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/fatehov_k_lab3_BACKEND%shlibext \
+# RUN: -run-pass=inc-dec-combine %s -o - | FileCheck %s
+
+--- |
+  source_filename = "test_inc_dec.ll"
+  target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+
+  define i64 @test_single_inc(i64 %a) { ret i64 %a }
+  define i64 @test_single_dec(i64 %a) { ret i64 %a }
+  define i64 @test_triple_inc(i64 %a) { ret i64 %a }
+  define i64 @test_double_dec(i64 %a) { ret i64 %a }
+  define i64 @test_inc_dec_cancel(i64 %a) { ret i64 %a }
+  define i64 @test_dec_inc_cancel(i64 %a) { ret i64 %a }
+  define i32 @test_inc32(i32 %a) { ret i32 %a }
+  define i64 @test_two_regs(i64 %a, i64 %b) { ret i64 %a }
+  define i64 @test_non_adjacent(i64 %a, i64 %b) { ret i64 %a }
+...
+
+---
+# CHECK-LABEL: name: test_single_inc
+name:            test_single_inc
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK:     $rax = ADD64ri32 $rax, 1, implicit-def $eflags
+    ; CHECK-NOT: INC64r
+    $rax = INC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+---
+# CHECK-LABEL: name: test_single_dec
+name:            test_single_dec
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK:     $rax = SUB64ri32 $rax, 1, implicit-def $eflags
+    ; CHECK-NOT: DEC64r
+    $rax = DEC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+---
+# CHECK-LABEL: name: test_triple_inc
+name:            test_triple_inc
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK:     $rax = ADD64ri32 $rax, 3, implicit-def $eflags
+    ; CHECK-NOT: INC64r
+    $rax = INC64r $rax, implicit-def $eflags
+    $rax = INC64r $rax, implicit-def $eflags
+    $rax = INC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+---
+# CHECK-LABEL: name: test_double_dec
+name:            test_double_dec
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK:     $rax = SUB64ri32 $rax, 2, implicit-def $eflags
+    ; CHECK-NOT: DEC64r
+    $rax = DEC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+---
+# CHECK-LABEL: name: test_inc_dec_cancel
+name:            test_inc_dec_cancel
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK-NOT: INC64r
+    ; CHECK-NOT: DEC64r
+    ; CHECK-NOT: ADD64ri32
+    ; CHECK-NOT: SUB64ri32
+    $rax = INC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+---
+# CHECK-LABEL: name: test_dec_inc_cancel
+name:            test_dec_inc_cancel
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rax
+    ; CHECK-NOT: INC64r
+    ; CHECK-NOT: DEC64r
+    ; CHECK-NOT: ADD64ri32
+    ; CHECK-NOT: SUB64ri32
+    $rax = DEC64r $rax, implicit-def $eflags
+    $rax = INC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+---
+# CHECK-LABEL: name: test_inc32
+name:            test_inc32
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $eax
+    ; CHECK:     $eax = ADD32ri $eax, 1, implicit-def $eflags
+    ; CHECK-NOT: INC32r
+    $eax = INC32r $eax, implicit-def $eflags
+    RET64 $eax
+...
+
+---
+# CHECK-LABEL: name: test_two_regs
+name:            test_two_regs
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rax, $rbx
+    ; CHECK:      $rax = ADD64ri32 $rax, 1, implicit-def $eflags
+    ; CHECK-NEXT: $rbx = ADD64ri32 $rbx, 1, implicit-def $eflags
+    ; CHECK-NOT:  INC64r
+    $rax = INC64r $rax, implicit-def $eflags
+    $rbx = INC64r $rbx, implicit-def $eflags
+    RET64 $rax
+...
+
+---
+# CHECK-LABEL: name: test_non_adjacent
+name:            test_non_adjacent
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rax, $rbx
+    ; CHECK:      $rax = ADD64ri32 $rax, 1, implicit-def $eflags
+    ; CHECK-NEXT: $rbx = MOV64rr $rax
+    ; CHECK-NEXT: $rax = ADD64ri32 $rax, 1, implicit-def $eflags
+    ; CHECK-NOT:  INC64r
+    $rax = INC64r $rax, implicit-def $eflags
+    $rbx = MOV64rr $rax
+    $rax = INC64r $rax, implicit-def $eflags
+    RET64 $rax
+...

@@ -1,0 +1,122 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/spichek_d_lab_3_BACKEND%shlibext -run-pass=spichek-lab-3 %s -o - | FileCheck %s
+
+---
+name: test_multiple_inc32
+body: |
+  bb.0:
+    $edi = INC32r $edi, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def $eflags
+    RET64 $edi
+...
+# CHECK-LABEL: name: test_multiple_inc32
+# CHECK:      $edi = ADD32ri $edi, 3
+# CHECK-NEXT: RET64 $edi
+
+---
+name: test_multiple_dec64
+body: |
+  bb.0:
+    $rsi = DEC64r $rsi, implicit-def $eflags
+    $rsi = DEC64r $rsi, implicit-def $eflags
+    RET64 $rsi
+...
+# CHECK-LABEL: name: test_multiple_dec64
+# CHECK:      $rsi = SUB64ri32 $rsi, 2
+# CHECK-NEXT: RET64 $rsi
+
+---
+name: test_mixed_zero_delta
+body: |
+  bb.0:
+    $eax = INC32r $eax, implicit-def $eflags
+    $eax = DEC32r $eax, implicit-def $eflags
+    RET64 $eax
+...
+# CHECK-LABEL: name: test_mixed_zero_delta
+# CHECK:      $eax = ADD32ri $eax, 0
+# CHECK-NEXT: RET64 $eax
+
+---
+name: test_mixed_positive
+body: |
+  bb.0:
+    $ebx = INC32r $ebx, implicit-def $eflags
+    $ebx = INC32r $ebx, implicit-def $eflags
+    $ebx = DEC32r $ebx, implicit-def $eflags
+    RET64 $ebx
+...
+# CHECK-LABEL: name: test_mixed_positive
+# CHECK:      $ebx = ADD32ri $ebx, 1
+# CHECK-NEXT: RET64 $ebx
+
+---
+name: test_interleaved_registers
+body: |
+  bb.0:
+    $eax = INC32r $eax, implicit-def $eflags
+    $ecx = INC32r $ecx, implicit-def $eflags
+    $eax = INC32r $eax, implicit-def $eflags
+    RET64 $eax
+...
+# CHECK-LABEL: name: test_interleaved_registers
+# CHECK:      $eax = ADD32ri $eax, 1
+# CHECK-NEXT: $ecx = ADD32ri $ecx, 1
+# CHECK-NEXT: $eax = ADD32ri $eax, 1
+# CHECK-NEXT: RET64 $eax
+
+---
+name: test_single_instructions
+body: |
+  bb.0:
+    $edx = INC32r $edx, implicit-def $eflags
+    $rcx = DEC64r $rcx, implicit-def $eflags
+    RET64 $edx
+...
+# CHECK-LABEL: name: test_single_instructions
+# CHECK:      $edx = ADD32ri $edx, 1
+# CHECK-NEXT: $rcx = SUB64ri32 $rcx, 1
+# CHECK-NEXT: RET64 $edx
+
+---
+name: test_interruption
+body: |
+  bb.0:
+    $edi = INC32r $edi, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def $eflags
+    $eax = MOV32rr $edi
+    $edi = INC32r $edi, implicit-def $eflags
+    RET64 $edi
+...
+# CHECK-LABEL: name: test_interruption
+# CHECK:      $edi = ADD32ri $edi, 2
+# CHECK-NEXT: $eax = MOV32rr $edi
+# CHECK-NEXT: $edi = ADD32ri $edi, 1
+# CHECK-NEXT: RET64 $edi
+
+---
+name: test_mixed_negative
+body: |
+  bb.0:
+    $ebx = INC32r $ebx, implicit-def $eflags
+    $ebx = DEC32r $ebx, implicit-def $eflags
+    $ebx = DEC32r $ebx, implicit-def $eflags
+    $ebx = DEC32r $ebx, implicit-def $eflags
+    RET64 $ebx
+...
+# CHECK-LABEL: name: test_mixed_negative
+# CHECK:      $ebx = SUB32ri $ebx, 2
+# CHECK-NEXT: RET64 $ebx
+
+---
+name: test_mixed_64bit
+body: |
+  bb.0:
+    $r8 = INC64r $r8, implicit-def $eflags
+    $r8 = DEC64r $r8, implicit-def $eflags
+    $r8 = INC64r $r8, implicit-def $eflags
+    RET64 $r8
+...
+# CHECK-LABEL: name: test_mixed_64bit
+# CHECK:      $r8 = ADD64ri32 $r8, 1
+# CHECK-NEXT: RET64 $r8

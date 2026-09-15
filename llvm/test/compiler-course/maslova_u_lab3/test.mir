@@ -1,0 +1,116 @@
+# RUN: llc -load %llvmshlibdir/maslova_u_lab3_BACKEND%pluginext -march=x86 -run-pass=x86-incdec-to-addsub -o - %s | FileCheck %s
+
+---
+name: test_single_inc
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_single_inc
+    ; CHECK: %0:gr32 = ADD32ri8 %0, 1, implicit-def $eflags
+    %0:gr32 = COPY $eax
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    $eax = COPY %0
+    RET 0, $eax
+...
+---
+name: test_single_dec
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_single_dec
+    ; CHECK: %0:gr32 = SUB32ri8 %0, 1, implicit-def $eflags
+    %0:gr32 = COPY $eax
+    %0:gr32 = DEC32r %0, implicit-def dead $eflags
+    $eax = COPY %0
+    RET 0, $eax
+...
+---
+name: test_long_chain
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_long_chain
+    ; CHECK: %0:gr32 = ADD32ri8 %0, 5, implicit-def $eflags
+    %0:gr32 = COPY $eax
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    $eax = COPY %0
+    RET 0, $eax
+...
+---
+name: test_mixed_result_pos
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_mixed_result_pos
+    ; CHECK: %0:gr32 = ADD32ri8 %0, 1, implicit-def $eflags
+    %0:gr32 = COPY $eax
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = DEC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = DEC32r %0, implicit-def dead $eflags
+    $eax = COPY %0
+    RET 0, $eax
+...
+---
+name: test_mixed_result_neg
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_mixed_result_neg
+    ; CHECK: %0:gr32 = SUB32ri8 %0, 2, implicit-def $eflags
+    %0:gr32 = COPY $eax
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = DEC32r %0, implicit-def dead $eflags
+    %0:gr32 = DEC32r %0, implicit-def dead $eflags
+    %0:gr32 = DEC32r %0, implicit-def dead $eflags
+    $eax = COPY %0
+    RET 0, $eax
+...
+---
+name: test_zero_sum
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_zero_sum
+    ; CHECK-NOT: INC32r
+    ; CHECK-NOT: DEC32r
+    ; CHECK-NOT: ADD32ri8
+    ; CHECK-NOT: SUB32ri8
+    %0:gr32 = COPY $eax
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = DEC32r %0, implicit-def dead $eflags
+    $eax = COPY %0
+    RET 0, $eax
+...
+---
+name: test_interrupted
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_interrupted
+    ; CHECK: %0:gr32 = ADD32ri8 %0, 2, implicit-def $eflags
+    ; CHECK-NEXT: %1:gr32 = MOV32ri 10
+    ; CHECK-NEXT: %0:gr32 = ADD32ri8 %0, 1, implicit-def $eflags
+    %0:gr32 = COPY $eax
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %1:gr32 = MOV32ri 10
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    $eax = COPY %0
+    RET 0, $eax
+...
+---
+name: test_multiple_regs
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_multiple_regs
+    ; CHECK: %0:gr32 = ADD32ri8 %0, 2, implicit-def $eflags
+    ; CHECK: %1:gr32 = SUB32ri8 %1, 2, implicit-def $eflags
+    %0:gr32 = COPY $eax
+    %1:gr32 = COPY $ebx
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %0:gr32 = INC32r %0, implicit-def dead $eflags
+    %1:gr32 = DEC32r %1, implicit-def dead $eflags
+    %1:gr32 = DEC32r %1, implicit-def dead $eflags
+    $eax = COPY %0
+    $ebx = COPY %1
+    RET 0, $eax
+...

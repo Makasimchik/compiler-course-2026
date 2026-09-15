@@ -1,0 +1,156 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/levonychev-i-lab3_BACKEND%shlibext \
+# RUN: -run-pass=levonychev-nullptr-x86 %s -o - | FileCheck %s
+
+
+--- |
+  define i32 @test_nullptr_check(ptr %p) {
+  entry:
+    %v = load i32, ptr %p
+    ret i32 %v
+  }
+  define i32 @test_no_memory(i32 %a, i32 %b) {
+  entry:
+    %res = add i32 %a, %b
+    ret i32 %res
+  }
+  define void @test_store(ptr %p, i32 %val) {
+  entry:
+    store i32 %val, ptr %p
+    ret void
+  }
+  define i32 @test_indexed_load(ptr %arr, i64 %idx) {
+  entry:
+    %p = getelementptr i32, ptr %arr, i64 %idx
+    %v = load i32, ptr %p
+    ret i32 %v
+  }
+  define i32 @test_redundant_check(ptr %p) {
+  entry:
+    %v = load i32, ptr %p
+    ret i32 %v
+  }
+...
+---
+# CHECK-LABEL: name: test_nullptr_check
+name:            test_nullptr_check
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+
+body:             |
+  bb.0.entry:
+    liveins: $rdi
+    
+    %0:gr64 = COPY $rdi
+    
+    ; CHECK:      $rdi = MOV64rr %0
+    ; CHECK-NEXT: CALL64pcrel32 &check_null
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    
+    $eax = COPY %1
+    RET 0, $eax
+---
+# CHECK-LABEL: name: test_no_memory
+name:            test_no_memory
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr32 }
+liveins:
+  - { reg: '$edi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+
+body:             |
+  bb.0.entry:
+    liveins: $edi, $esi
+    
+    %0:gr32 = COPY $edi
+    %1:gr32 = COPY $esi
+    
+    ; Правильная проверка: отсюда и до ADD32rr НЕ должно быть вызова check_null
+    ; CHECK-NOT: CALL64pcrel32 &check_null
+    ; CHECK:     %2:gr32 = ADD32rr %0, %1
+    
+    %2:gr32 = ADD32rr %0, %1, implicit-def dead $eflags
+    
+    $eax = COPY %2
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: test_store
+name:            test_store
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $esi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = COPY $esi
+    
+    ; CHECK:      $rdi = MOV64rr %0
+    ; CHECK-NEXT: CALL64pcrel32 &check_null
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+
+---
+# CHECK-LABEL: name: test_indexed_load
+name:            test_indexed_load
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64_nosp }  # <--- ИЗМЕНЕНО: gr64 -> gr64_nosp
+  - { id: 2, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64_nosp = COPY $rsi
+    
+    ; CHECK:      $rdi = MOV64rr %0
+    ; CHECK-NEXT: CALL64pcrel32 &check_null
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+    %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+    $eax = COPY %2
+    RET 0, $eax
+
+---
+# Добавлена проверка на отсутствие повторной вставки check_null
+# CHECK-LABEL: name: test_redundant_check
+name:            test_redundant_check
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    $rdi = MOV64rr %0
+    CALL64pcrel32 &check_null, implicit $rdi
+
+    ; CHECK:      CALL64pcrel32 &check_null
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    ; CHECK-NOT:  CALL64pcrel32 &check_null
+    
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    
+    $eax = COPY %1
+    RET 0, $eax
+...

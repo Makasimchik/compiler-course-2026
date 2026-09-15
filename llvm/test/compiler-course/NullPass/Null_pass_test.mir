@@ -1,0 +1,91 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/NullPass_BACKEND%shlibext \
+# RUN: -run-pass=null-check %s -o - | FileCheck %s
+
+--- |
+  define i32 @readPtr(ptr %p) {
+    %val = load i32, ptr %p
+    ret i32 %val
+  }
+
+  define i32 @noPtr(i32 %x) {
+    ret i32 %x
+  }
+
+  define i32 @twoPtr(ptr %p, ptr %q) {
+    %val1 = load i32, ptr %p
+    %val2 = load i32, ptr %q
+    %sum = add i32 %val1, %val2
+    ret i32 %sum
+  }
+...
+
+---
+# CHECK-LABEL: name: readPtr
+# CHECK: TEST64rr $rdi, $rdi
+# CHECK-NEXT: JCC_1 {{.*}}, 4
+# CHECK-NEXT: JMP_1
+# CHECK: MOV32rm
+
+name:            readPtr
+alignment:       16
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi', virtual-reg: '' }
+frameInfo:
+  stackSize:       0
+  maxAlignment:    1
+body:             |
+  bb.0:
+    liveins: $rdi
+
+    renamable $eax = MOV32rm killed renamable $rdi, 1, $noreg, 0, $noreg
+    RET64 $eax
+
+---
+# CHECK-LABEL: name: noPtr
+# CHECK-NOT: TEST64rr
+# CHECK-NOT: JCC_1
+
+name:            noPtr
+alignment:       16
+tracksRegLiveness: true
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+frameInfo:
+  stackSize:       0
+  maxAlignment:    1
+body:             |
+  bb.0:
+    liveins: $edi
+
+    renamable $eax = COPY $edi
+    RET64 $eax
+
+---
+# CHECK-LABEL: name: twoPtr
+# CHECK: TEST64rr $rdi, $rdi
+# CHECK: JCC_1 {{.*}}, 4
+# CHECK: JMP_1
+# CHECK: MOV32rm
+# CHECK: TEST64rr $rsi, $rsi
+# CHECK: JCC_1 {{.*}}, 4
+# CHECK: JMP_1
+# CHECK: MOV32rm
+
+name:            twoPtr
+alignment:       16
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi', virtual-reg: '' }
+  - { reg: '$rsi', virtual-reg: '' }
+frameInfo:
+  stackSize:       0
+  maxAlignment:    1
+body:             |
+  bb.0:
+    liveins: $rdi, $rsi
+
+    renamable $eax = MOV32rm killed renamable $rdi, 1, $noreg, 0, $noreg
+    renamable $ecx = MOV32rm killed renamable $rsi, 1, $noreg, 0, $noreg
+    renamable $eax = ADD32rr renamable $eax, renamable $ecx, implicit-def dead $eflags
+    RET64 $eax

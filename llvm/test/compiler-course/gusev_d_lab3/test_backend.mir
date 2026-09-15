@@ -1,0 +1,89 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/gusev_d_lab3_BACKEND%shlibext \
+# RUN:   -run-pass=gusev-d-lab3 %s -o - | FileCheck %s --implicit-check-not=INC --implicit-check-not=DEC
+# REQUIRES: x86-registered-target
+# UNSUPPORTED: system-windows
+
+--- |
+  define void @replace_single() {
+    ret void
+  }
+
+  define void @fold_sequence_to_add() {
+    ret void
+  }
+
+  define void @fold_sequence_to_sub() {
+    ret void
+  }
+
+  define void @fold_sequence_to_nothing() {
+    ret void
+  }
+
+...
+---
+name:            replace_single
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $eax, $ebx
+
+    ; CHECK-LABEL: name: replace_single
+    ; CHECK: $eax = ADD32ri8 $eax, 1, implicit-def $eflags
+    ; CHECK-NEXT: $ebx = SUB32ri8 $ebx, 1, implicit-def $eflags
+    ; CHECK-NEXT: RET64
+    $eax = INC32r $eax, implicit-def $eflags
+    $ebx = DEC32r $ebx, implicit-def $eflags
+    RET64
+
+...
+---
+name:            fold_sequence_to_add
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $eax
+
+    ; CHECK-LABEL: name: fold_sequence_to_add
+    ; CHECK: $eax = ADD32ri8 $eax, 2, implicit-def $eflags
+    ; CHECK-NEXT: RET64
+    $eax = INC32r $eax, implicit-def $eflags
+    $eax = INC32r $eax, implicit-def $eflags
+    $eax = INC32r $eax, implicit-def $eflags
+    $eax = DEC32r $eax, implicit-def $eflags
+    RET64
+
+...
+---
+name:            fold_sequence_to_sub
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $rax
+
+    ; CHECK-LABEL: name: fold_sequence_to_sub
+    ; CHECK: $rax = SUB64ri8 $rax, 2, implicit-def $eflags
+    ; CHECK-NEXT: RET64
+    $rax = DEC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    $rax = INC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    RET64
+
+...
+---
+name:            fold_sequence_to_nothing
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $eax
+
+    ; CHECK-LABEL: name: fold_sequence_to_nothing
+    ; CHECK-NOT: ADD32ri
+    ; CHECK-NOT: SUB32ri
+    ; CHECK: RET64
+    $eax = INC32r $eax, implicit-def $eflags
+    $eax = DEC32r $eax, implicit-def $eflags
+    RET64
+
+...

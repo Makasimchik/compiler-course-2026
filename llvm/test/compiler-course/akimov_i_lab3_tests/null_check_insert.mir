@@ -1,0 +1,76 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/akimov_i_lab3_BACKEND%shlibext \
+# RUN: -run-pass=null-check-inserter  %s -o - | FileCheck %s
+
+--- |
+  define i32 @load_ptr(ptr %ptr) {
+    %val = load i32, ptr %ptr
+    ret i32 %val
+  }
+
+  define i32 @no_load(i32 %a) {
+    ret i32 %a
+  }
+
+  define void @store_ptr(ptr %ptr, i32 %val) {
+    store i32 %val, ptr %ptr
+    ret void
+  }
+...
+---
+# CHECK-LABEL: name: load_ptr
+# CHECK: [[REG:%[0-9]+]]:gr64 = COPY $rdi
+# CHECK: TEST64rr [[REG]], [[REG]], implicit-def $eflags
+# CHECK-NEXT: JCC_1 %bb.1, 4, implicit $eflags
+# CHECK: MOV32rm [[REG]]
+# CHECK: RET
+# CHECK: bb.1:
+# CHECK: CALL64pcrel32 {{[@&]}}abort
+# CHECK: RET
+name:            load_ptr
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi' }
+body:             |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = MOV32rm %0, 0, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: no_load
+# CHECK-NOT: TEST64rr
+# CHECK: RET
+name:            no_load
+tracksRegLiveness: true
+liveins:
+  - { reg: '$edi' }
+body:             |
+  bb.0:
+    liveins: $edi
+    $eax = COPY $edi
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: store_ptr
+# CHECK: [[REG:%[0-9]+]]:gr64 = COPY $rdi
+# CHECK: TEST64rr [[REG]], [[REG]], implicit-def $eflags
+# CHECK-NEXT: JCC_1 %bb.1, 4, implicit $eflags
+# CHECK: MOV32mr [[REG]]
+# CHECK: RET
+# CHECK: bb.1:
+# CHECK: CALL64pcrel32 {{[@&]}}abort
+# CHECK: RET
+name:            store_ptr
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi' }
+  - { reg: '$esi' }
+body:             |
+  bb.0:
+    liveins: $rdi, $esi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = COPY $esi
+    MOV32mr %0, 0, $noreg, 0, $noreg, %1
+    RET 0

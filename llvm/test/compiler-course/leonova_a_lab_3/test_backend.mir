@@ -1,0 +1,319 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu \
+# RUN:   --load=%llvmshlibdir/leonova_a_lab_3_BACKEND.so \
+# RUN:   -run-pass=loop-unroll-x86 %s -o - | FileCheck %s
+
+--- |
+  ; Test 1: Unknown trip count - unroll 5x, keep back-edge
+  define void @test_unknown_trip_count() {
+  entry:
+    br label %bb0
+  bb0:
+    %a = add i32 1, 2
+    %b = add i32 %a, 3
+    br label %bb0
+  }
+
+  ; Test 2: Nested loops - inner unrolled, outer preserved
+  define void @test_nested_loops() {
+  entry:
+    br label %outer_loop
+  outer_loop:
+    %x = add i32 1, 2
+    br label %inner_loop
+  inner_loop:
+    %y = add i32 %x, 3
+    %z = add i32 %y, 4
+    br label %inner_loop
+  }
+
+  ; Test 3: No loop (should not be modified)
+  define void @test_no_loop() {
+  entry:
+    br label %bb0
+  bb0:
+    %a = add i32 1, 2
+    ret void
+  }
+
+  ; Test 4: Empty loop body
+  define void @test_empty_loop() {
+  entry:
+    br label %bb0
+  bb0:
+    br label %bb0
+  }
+
+  ; Test 5: Loop with trip count = 3
+  define void @test_trip_count_3() {
+  entry:
+    br label %bb0
+  bb0:
+    %a = add i32 1, 2
+    %b = add i32 %a, 3
+    br label %bb0
+  }
+
+  ; Test 6: Loop with trip count = 5
+  define void @test_trip_count_5() {
+  entry:
+    br label %bb0
+  bb0:
+    %a = add i32 1, 2
+    %b = add i32 %a, 3
+    br label %bb0
+  }
+
+  ; Test 7: Loop with trip count = 1 (no unrolling)
+  define void @test_trip_count_1() {
+  entry:
+    br label %bb0
+  bb0:
+    %a = add i32 1, 2
+    br label %bb0
+  }
+
+  ; Test 8: Large trip count (> 5) - unroll 5x, keep back-edge
+  define void @test_large_trip_count() {
+  entry:
+    br label %bb0
+  bb0:
+    %a = add i32 1, 2
+    %b = add i32 %a, 3
+    br label %bb0
+  }
+
+  ; Test 9: Loop with different operations (ADD and SUB) with trip count = 3
+  define void @test_mixed_operations_trip_count_3() {
+  entry:
+    br label %bb0
+  bb0:
+    %a = add i32 1, 2
+    %b = sub i32 %a, 3
+    %c = add i32 %b, 4
+    br label %bb0
+  }
+...
+
+---
+name: test_unknown_trip_count
+tracksRegLiveness: true
+
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_unknown_trip_count
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: JMP_1
+
+    %0 = ADD32ri %0, 2, implicit-def dead $eflags
+    %1 = ADD32ri %0, 3, implicit-def dead $eflags
+    JMP_1 %bb.0
+
+---
+name: test_nested_loops
+tracksRegLiveness: true
+
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr32 }
+
+body: |
+  bb.0.outer_loop:
+    ; CHECK-LABEL: name: test_nested_loops
+    ; CHECK: ADD32ri
+    ; CHECK: JMP_1
+    
+    %0 = ADD32ri %0, 2, implicit-def dead $eflags
+    JMP_1 %bb.1
+
+  bb.1.inner_loop:
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: JMP_1
+    
+    %1 = ADD32ri %0, 3, implicit-def dead $eflags
+    %2 = ADD32ri %1, 4, implicit-def dead $eflags
+    JMP_1 %bb.1
+
+---
+name: test_no_loop
+tracksRegLiveness: true
+
+registers:
+  - { id: 0, class: gr32 }
+
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_no_loop
+    ; CHECK: ADD32ri
+    ; CHECK-NOT: ADD32ri
+    ; CHECK: RET64
+    
+    %0 = ADD32ri %0, 2, implicit-def dead $eflags
+    RET64
+
+---
+name: test_empty_loop
+tracksRegLiveness: true
+
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_empty_loop
+    ; CHECK-NOT: JMP_1
+    ; CHECK: RET64
+    
+    JMP_1 %bb.0
+    RET64
+
+---
+name: test_trip_count_3
+tracksRegLiveness: true
+
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_trip_count_3
+    ; CHECK: CMP32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK-NOT: JMP_1
+    
+    CMP32ri %0, 2, implicit-def $eflags
+    %0 = ADD32ri %0, 2, implicit-def dead $eflags
+    %1 = ADD32ri %0, 3, implicit-def dead $eflags
+    JMP_1 %bb.0
+
+---
+name: test_trip_count_5
+tracksRegLiveness: true
+
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_trip_count_5
+    ; CHECK: CMP32ri8
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK-NOT: JMP_1
+    
+    CMP32ri8 %0, 4, implicit-def $eflags
+    %0 = ADD32ri %0, 2, implicit-def dead $eflags
+    %1 = ADD32ri %0, 3, implicit-def dead $eflags
+    JMP_1 %bb.0
+
+---
+name: test_trip_count_1
+tracksRegLiveness: true
+
+registers:
+  - { id: 0, class: gr32 }
+
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_trip_count_1
+    ; CHECK: CMP32ri
+    ; CHECK: ADD32ri
+    ; CHECK-NOT: ADD32ri
+    ; CHECK-NOT: JMP_1
+    
+    CMP32ri %0, 0, implicit-def $eflags
+    %0 = ADD32ri %0, 2, implicit-def dead $eflags
+    JMP_1 %bb.0
+
+---
+name: test_large_trip_count
+tracksRegLiveness: true
+
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_large_trip_count
+    ; CHECK: CMP32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: JMP_1
+    
+    CMP32ri %0, 10, implicit-def $eflags
+    %0 = ADD32ri %0, 2, implicit-def dead $eflags
+    %1 = ADD32ri %0, 3, implicit-def dead $eflags
+    JMP_1 %bb.0
+
+---
+name: test_mixed_operations_trip_count_3
+tracksRegLiveness: true
+
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr32 }
+
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: test_mixed_operations_trip_count_3
+    ; CHECK: CMP32ri
+    ; CHECK: ADD32ri
+    ; CHECK: SUB32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: SUB32ri
+    ; CHECK: ADD32ri
+    ; CHECK: ADD32ri
+    ; CHECK: SUB32ri
+    ; CHECK: ADD32ri
+    ; CHECK-NOT: JMP_1
+    
+    CMP32ri %0, 2, implicit-def $eflags
+    %0 = ADD32ri %0, 2, implicit-def dead $eflags
+    %1 = SUB32ri %0, 3, implicit-def dead $eflags
+    %2 = ADD32ri %1, 4, implicit-def dead $eflags
+    JMP_1 %bb.0

@@ -1,0 +1,159 @@
+# RUN: llc  -mtriple=x86_64-unknown-linux-gnu -load %llvmshlibdir/ChyokotovAIncDecReplace_BACKEND%pluginext -run-pass=chyokotov_a_incanddec_replace-x86 -o - %s | FileCheck %s
+
+--- 
+name: test_32bit_single_inc
+body: |
+  bb.0:
+    $eax = INC32r $eax, implicit-def $eflags
+    RET64 $eax
+...
+
+# CHECK-LABEL: name: test_32bit_single_inc
+# CHECK: $eax = ADD32ri $eax, 1
+# CHECK-NEXT: RET64 $eax
+
+---
+name: test_32bit_single_dec
+body: |
+  bb.0:
+    $eax = DEC32r $eax, implicit-def $eflags
+    RET64 $eax
+...
+
+# CHECK-LABEL: name: test_32bit_single_dec
+# CHECK: $eax = SUB32ri $eax, 1
+# CHECK-NEXT: RET64 $eax
+
+---
+name: test_32bit_two_incs
+body: |
+  bb.0:
+    $eax = INC32r $eax, implicit-def $eflags
+    $eax = INC32r $eax, implicit-def $eflags
+    RET64 $eax
+...
+
+# CHECK-LABEL: name: test_32bit_two_incs
+# CHECK: $eax = ADD32ri $eax, 2
+# CHECK-NEXT: RET64 $eax
+
+---
+name: test_32bit_three_decs
+body: |
+  bb.0:
+    $eax = DEC32r $eax, implicit-def $eflags
+    $eax = DEC32r $eax, implicit-def $eflags
+    $eax = DEC32r $eax, implicit-def $eflags
+    RET64 $eax
+...
+
+# CHECK-LABEL: name: test_32bit_three_decs
+# CHECK: $eax = SUB32ri $eax, 3
+# CHECK-NEXT: RET64 $eax
+
+---
+name: test_32bit_inc_dec_zero
+body: |
+  bb.0:
+    $eax = INC32r $eax, implicit-def $eflags
+    $eax = DEC32r $eax, implicit-def $eflags
+    RET64 $eax
+...
+
+# CHECK-LABEL: name: test_32bit_inc_dec_zero
+# CHECK-NOT: ADD32ri
+# CHECK: RET64 $eax
+
+---
+name: test_64bit_single_inc
+body: |
+  bb.0:
+    $rax = INC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+# CHECK-LABEL: name: test_64bit_single_inc
+# CHECK: $rax = ADD64ri32 $rax, 1
+# CHECK-NEXT: RET64 $rax
+
+---
+name: test_64bit_single_dec
+body: |
+  bb.0:
+    $rax = DEC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+# CHECK-LABEL: name: test_64bit_single_dec
+# CHECK: $rax = SUB64ri32 $rax, 1
+# CHECK-NEXT: RET64 $rax
+
+---
+name: test_64bit_two_incs
+body: |
+  bb.0:
+    $rax = INC64r $rax, implicit-def $eflags
+    $rax = INC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+# CHECK-LABEL: name: test_64bit_two_incs
+# CHECK: $rax = ADD64ri32 $rax, 2
+# CHECK-NEXT: RET64 $rax
+
+---
+name: test_64bit_two_decs
+body: |
+  bb.0:
+    $rax = DEC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+# CHECK-LABEL: name: test_64bit_two_decs
+# CHECK: $rax = SUB64ri32 $rax, 2
+# CHECK-NEXT: RET64 $rax
+
+---
+name: test_64bit_inc_dec_zero
+body: |
+  bb.0:
+    $rax = INC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+# CHECK-LABEL: name: test_64bit_inc_dec_zero
+# CHECK-NOT: ADD64ri32
+# CHECK-NOT: SUB64ri32
+# CHECK: RET64 $rax
+
+---
+---
+name: test_64bit_two_inc_one_dec
+body: |
+  bb.0:
+    $rax = INC64r $rax, implicit-def $eflags
+    $rax = INC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+# CHECK-LABEL: name: test_64bit_two_inc_one_dec
+# CHECK: $rax = ADD64ri32 $rax, 1
+# CHECK-NEXT: RET64 $rax
+
+---
+name: test_64bit_three_dec_one_inc
+body: |
+  bb.0:
+    $rax = DEC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    $rax = DEC64r $rax, implicit-def $eflags
+    $rax = INC64r $rax, implicit-def $eflags
+    RET64 $rax
+...
+
+# CHECK-LABEL: name: test_64bit_three_dec_one_inc
+# CHECK: $rax = SUB64ri32 $rax, 2
+# CHECK-NEXT: RET64 $rax

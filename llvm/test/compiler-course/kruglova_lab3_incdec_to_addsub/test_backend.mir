@@ -1,0 +1,85 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu \
+# RUN: -load %p/../../../../build/lib/kruglova_lab3_BACKEND.so \
+# RUN: -run-pass=kruglova_incdec_to_addsub-x86 %s -o - | FileCheck %s
+
+--- |
+  define void @inc_chain() { ret void }
+  define void @dec_chain() { ret void }
+  define void @mixed_chain() { ret void }
+  define void @break_chain() { ret void }
+  define void @zero_result() { ret void }
+...
+
+# inc chain
+---
+name: inc_chain
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: inc_chain
+    ; CHECK: %[[BASE:[0-9]+]]:gr32 = IMPLICIT_DEF
+    ; CHECK: %[[RES:[0-9]+]]:gr32 = ADD32ri %[[BASE]], 3, implicit-def $eflags
+    %0:gr32 = IMPLICIT_DEF
+    %1:gr32 = INC32r %0, implicit-def $eflags
+    %2:gr32 = INC32r %1, implicit-def $eflags
+    %3:gr32 = INC32r %2, implicit-def $eflags
+    RET64
+
+# dec chain
+---
+name: dec_chain
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: dec_chain
+    ; CHECK: %[[BASE:[0-9]+]]:gr32 = IMPLICIT_DEF
+    ; CHECK: %[[RES:[0-9]+]]:gr32 = SUB32ri %[[BASE]], 2, implicit-def $eflags
+    %10:gr32 = IMPLICIT_DEF
+    %11:gr32 = DEC32r %10, implicit-def $eflags
+    %12:gr32 = DEC32r %11, implicit-def $eflags
+    RET64
+
+# mixed chain
+---
+name: mixed_chain
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: mixed_chain
+    ; CHECK: %[[BASE:[0-9]+]]:gr32 = IMPLICIT_DEF
+    ; CHECK: %[[RES:[0-9]+]]:gr32 = ADD32ri %[[BASE]], 1, implicit-def $eflags
+    %20:gr32 = IMPLICIT_DEF
+    %21:gr32 = INC32r %20, implicit-def $eflags
+    %22:gr32 = INC32r %21, implicit-def $eflags
+    %23:gr32 = DEC32r %22, implicit-def $eflags
+    RET64
+
+# break chain
+---
+name: break_chain
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: break_chain
+    ; CHECK: INC32r
+    ; CHECK: NOOP
+    ; CHECK: INC32r
+    %30:gr32 = IMPLICIT_DEF
+    %31:gr32 = INC32r %30, implicit-def $eflags
+    NOOP
+    %32:gr32 = INC32r %31, implicit-def $eflags
+    RET64
+
+# zero result
+---
+name: zero_result
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: zero_result
+    ; CHECK: %[[BASE:[0-9]+]]:gr32 = IMPLICIT_DEF
+    ; CHECK: %[[RES:[0-9]+]]:gr32 = COPY %[[BASE]]
+    %40:gr32 = IMPLICIT_DEF
+    %41:gr32 = INC32r %40, implicit-def $eflags
+    %42:gr32 = DEC32r %41, implicit-def $eflags
+    RET64

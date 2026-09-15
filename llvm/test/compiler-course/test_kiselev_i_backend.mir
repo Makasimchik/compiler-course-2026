@@ -1,0 +1,124 @@
+# RUN: llc -load %llvmshlibdir/KiselevIIncDec_BACKEND%pluginext \
+# RUN: -run-pass=kiselev-inc-dec-pass %s -o - | FileCheck %s
+
+---
+name: inc_all_sizes
+body: |
+  bb.0:
+    liveins: $al, $ax, $eax, $rax
+
+    ; CHECK-DAG: ADD8ri {{.*}}$al, 1
+    ; CHECK-DAG: ADD16ri {{.*}}$ax, 1
+    ; CHECK-DAG: ADD32ri {{.*}}$eax, 1
+    ; CHECK-DAG: ADD64ri32 {{.*}}$rax, 1
+
+    renamable $al = INC8r renamable $al, implicit-def $eflags
+    renamable $ax = INC16r renamable $ax, implicit-def $eflags
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    renamable $rax = INC64r renamable $rax, implicit-def $eflags
+    RET64
+
+---
+name: dec_all_sizes
+body: |
+  bb.0:
+    liveins: $eax
+
+    ; CHECK: SUB32ri {{.*}}$eax, 1
+
+    renamable $eax = DEC32r renamable $eax, implicit-def $eflags
+    RET64
+
+---
+name: only_inc_chain
+body: |
+  bb.0:
+    liveins: $eax
+
+    ; CHECK: ADD32ri {{.*}}$eax, 3
+
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    RET64
+
+---
+name: mixed_chain
+body: |
+  bb.0:
+    liveins: $eax
+
+    ; CHECK: ADD32ri {{.*}}$eax, 2
+
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    renamable $eax = DEC32r renamable $eax, implicit-def $eflags
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    RET64
+
+---
+name: cancel_out
+body: |
+  bb.0:
+    liveins: $eax
+
+    ; CHECK-NOT: ADD32ri
+    ; CHECK-NOT: SUB32ri
+    ; CHECK-NOT: INC32r
+    ; CHECK-NOT: DEC32r
+
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    renamable $eax = DEC32r renamable $eax, implicit-def $eflags
+    RET64
+
+---
+name: different_regs
+body: |
+  bb.0:
+    liveins: $eax, $ebx
+
+    ; CHECK-DAG: ADD32ri {{.*}}$eax, 1
+    ; CHECK-DAG: ADD32ri {{.*}}$ebx, 1
+
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    renamable $ebx = INC32r renamable $ebx, implicit-def $eflags
+    RET64
+
+---
+name: different_widths
+body: |
+  bb.0:
+    liveins: $eax, $rax
+
+    ; CHECK: ADD32ri {{.*}}$eax, 1
+    ; CHECK: ADD64ri32 {{.*}}$rax, 1
+
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    renamable $rax = INC64r renamable $rax, implicit-def $eflags
+    RET64
+
+---
+name: interrupted
+body: |
+  bb.0:
+    liveins: $eax
+
+    ; CHECK: ADD32ri {{.*}}$eax, 1
+    ; CHECK: TEST32rr
+    ; CHECK: ADD32ri {{.*}}$eax, 1
+
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    TEST32rr renamable $eax, renamable $eax, implicit-def $eflags
+    renamable $eax = INC32r renamable $eax, implicit-def $eflags
+    RET64
+
+---
+name: no_change
+body: |
+  bb.0:
+    liveins: $eax
+
+    ; CHECK: ADD32rr {{.*}}$eax, {{.*}}$eax
+
+    renamable $eax = ADD32rr renamable $eax, renamable $eax, implicit-def $eflags
+    RET64

@@ -1,0 +1,127 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu -load=%llvmshlibdir/titaev_m_lab3_BACKEND%shlibext -run-pass=example-x86 %s -o - | FileCheck %s
+
+--- |
+  define i32 @foo1(i32 %value) { ret i32 %value }
+  define i32 @foo2(i32 %value) { ret i32 %value }
+  define i32 @foo3(i32 %value) { ret i32 %value }
+  define void @callee_limit_15() { ret void }
+  define void @callee_limit_16() { ret void }
+  define void @recursive_func() { ret void }
+  define void @test_limits() { ret void }
+  define void @extra_filler_1() { ret void }
+...
+---
+name:            foo1
+body:             |
+  bb.0:
+    liveins: $edi
+    $eax = COPY $edi
+    $eax = IMUL32rr $eax, $eax, implicit-def dead $eflags
+    RET64 $eax
+---
+name:            foo2
+body:             |
+  bb.0:
+    liveins: $edi
+    $ebx = COPY $edi
+    $ebx = ADD32ri $ebx, 10, implicit-def dead $eflags
+    CALL64pcrel32 @foo1, implicit $rsp, implicit $ssp, implicit $edi, implicit-def $eax
+    $ecx = COPY $eax
+    $eax = COPY $ebx
+    $eax = SUB32rr $eax, $ecx, implicit-def dead $eflags
+    RET64 $eax
+# CHECK-LABEL: name: foo2
+# CHECK-NOT: CALL64pcrel32 @foo1
+# CHECK: IMUL32rr
+---
+name:            foo3
+body:             |
+  bb.0:
+    liveins: $edi
+    CALL64pcrel32 @foo2, implicit $rsp, implicit $ssp, implicit $edi, implicit-def $eax
+    $ebx = COPY $eax
+    $edi = COPY $ebx
+    CALL64pcrel32 @foo1, implicit $rsp, implicit $ssp, implicit $edi, implicit-def $eax
+    $ecx = COPY $eax
+    $eax = COPY $ebx
+    $eax = IMUL32rr $eax, $ecx, implicit-def dead $eflags
+    RET64 $eax
+# CHECK-LABEL: name: foo3
+# CHECK-NOT: CALL64pcrel32 @foo2
+# CHECK-NOT: CALL64pcrel32 @foo1
+# CHECK: ADD32ri
+---
+name:            callee_limit_15
+body:             |
+  bb.0:
+    $eax = MOV32ri 1
+    $eax = MOV32ri 2
+    $eax = MOV32ri 3
+    $eax = MOV32ri 4
+    $eax = MOV32ri 5
+    $eax = MOV32ri 6
+    $eax = MOV32ri 7
+    $eax = MOV32ri 8
+    $eax = MOV32ri 9
+    $eax = MOV32ri 10
+    $eax = MOV32ri 11
+    $eax = MOV32ri 12
+    $eax = MOV32ri 13
+    $eax = MOV32ri 14
+    $eax = MOV32ri 15
+    RET64
+---
+name:            callee_limit_16
+body:             |
+  bb.0:
+    $ebx = MOV32ri 1
+    $ebx = MOV32ri 2
+    $ebx = MOV32ri 3
+    $ebx = MOV32ri 4
+    $ebx = MOV32ri 5
+    $ebx = MOV32ri 6
+    $ebx = MOV32ri 7
+    $ebx = MOV32ri 8
+    $ebx = MOV32ri 9
+    $ebx = MOV32ri 10
+    $ebx = MOV32ri 11
+    $ebx = MOV32ri 12
+    $ebx = MOV32ri 13
+    $ebx = MOV32ri 14
+    $ebx = MOV32ri 15
+    $ebx = MOV32ri 16
+    RET64
+---
+name:            recursive_func
+body:             |
+  bb.0:
+    liveins: $ecx
+    $ecx = INC32r $ecx, implicit-def $eflags
+    CALL64pcrel32 @recursive_func, implicit $rsp, implicit $ssp, implicit $ecx
+    RET64
+# CHECK-LABEL: name: recursive_func
+# CHECK: INC32r
+# CHECK: CALL64pcrel32 @recursive_func
+---
+name:            test_limits
+body:             |
+  bb.0:
+    CALL64pcrel32 @callee_limit_15, implicit $rsp, implicit $ssp
+    CALL64pcrel32 @callee_limit_16, implicit $rsp, implicit $ssp
+    RET64
+# CHECK-LABEL: name: test_limits
+# CHECK-NOT: CALL64pcrel32 @callee_limit_15
+# CHECK: CALL64pcrel32 @callee_limit_16
+---
+name:            extra_filler_1
+body:             |
+  bb.0:
+    $rax = MOV64ri 100
+    $rbx = MOV64ri 200
+    $rcx = MOV64ri 300
+    $rdx = MOV64ri 400
+    $rsi = MOV64ri 500
+    $rdi = MOV64ri 600
+    $r8 = MOV64ri 700
+    $r9 = MOV64ri 800
+    RET64

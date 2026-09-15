@@ -10,8 +10,8 @@ def main():
     deadlines = {
         "lab:clang": datetime(2026, 3, 17, hour=19, tzinfo=moscow_tz),
         "lab:llvm ir": datetime(2026, 4, 12, hour=19, tzinfo=moscow_tz),
-        "lab:backend": datetime(2099, 6, 1, hour=19, tzinfo=moscow_tz),
-        "lab:mlir": datetime(2099, 6, 1, hour=19, tzinfo=moscow_tz),
+        "lab:backend": datetime(2026, 5, 4, hour=19, tzinfo=moscow_tz),
+        "lab:mlir": datetime(2026, 5, 15, hour=19, tzinfo=moscow_tz),
     }
     lab_labels = ["lab:clang", "lab:llvm ir", "lab:backend", "lab:mlir"]
 

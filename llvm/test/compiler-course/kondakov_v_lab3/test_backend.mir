@@ -1,0 +1,221 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/kondakov_v_loop_unrolling_BACKEND%shlibext \
+# RUN: -run-pass=kondakov-loop-unroll-x86 %s -o - | FileCheck %s
+# REQUIRES: x86-registered-target
+
+---
+# CHECK-LABEL: name: unroll_three
+# CHECK: bb.1:
+# CHECK: $eax = ADD32rr
+# CHECK-NEXT: $eax = SUB32rr
+# CHECK-NEXT: $eax = IMUL32rr
+# CHECK-NEXT: $eax = ADD32rr
+# CHECK-NEXT: $eax = SUB32rr
+# CHECK-NEXT: $eax = IMUL32rr
+# CHECK-NEXT: $eax = ADD32rr
+# CHECK-NEXT: $eax = SUB32rr
+# CHECK-NEXT: $eax = IMUL32rr
+# CHECK-NOT: JCC_1 %bb.1, 5
+# CHECK: bb.2:
+name: unroll_three
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $eax = MOV32ri 10
+    $ebx = MOV32ri 2
+    $ecx = MOV32ri 3
+    $edx = MOV32ri 1
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $eax, $ebx, $ecx, $edx
+
+    $eax = ADD32rr killed $eax, $ebx, implicit-def dead $eflags
+    $eax = SUB32rr killed $eax, $ebx, implicit-def dead $eflags
+    $eax = IMUL32rr killed $eax, $ebx, implicit-def dead $eflags
+    $ecx = SUB32rr killed $ecx, $edx, implicit-def $eflags
+    JCC_1 %bb.1, 5, implicit killed $eflags
+
+  bb.2:
+    RET 0
+...
+
+---
+# CHECK-LABEL: name: over_limit
+# CHECK: bb.1:
+# CHECK-COUNT-1: $eax = ADD32rr
+# CHECK: JCC_1 %bb.1, 5
+name: over_limit
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $eax = MOV32ri 5
+    $ebx = MOV32ri 3
+    $ecx = MOV32ri 6
+    $edx = MOV32ri 1
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $eax, $ebx, $ecx, $edx
+
+    $eax = ADD32rr killed $eax, $ebx, implicit-def dead $eflags
+    $ecx = SUB32rr killed $ecx, $edx, implicit-def $eflags
+    JCC_1 %bb.1, 5, implicit killed $eflags
+
+  bb.2:
+    RET 0
+...
+
+---
+# CHECK-LABEL: name: nested_inner
+# CHECK: bb.2:
+# CHECK: $eax = ADD32rr
+# CHECK-NEXT: $eax = SUB32rr
+# CHECK-NEXT: $eax = IMUL32rr
+# CHECK-NEXT: $eax = ADD32rr
+# CHECK-NEXT: $eax = SUB32rr
+# CHECK-NEXT: $eax = IMUL32rr
+# CHECK-NEXT: $eax = ADD32rr
+# CHECK-NEXT: $eax = SUB32rr
+# CHECK-NEXT: $eax = IMUL32rr
+# CHECK-NOT: JCC_1 %bb.2, 5
+# CHECK: bb.3:
+# CHECK: JCC_1 %bb.1, 5
+name: nested_inner
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $eax = MOV32ri 4
+    $ebx = MOV32ri 2
+    $ecx = MOV32ri 2
+    $edx = MOV32ri 1
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    liveins: $eax, $ebx, $ecx, $edx
+
+    $esi = MOV32ri 3
+    JMP_1 %bb.2
+
+  bb.2:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    liveins: $eax, $ebx, $esi, $edx
+
+    $eax = ADD32rr killed $eax, $ebx, implicit-def dead $eflags
+    $eax = SUB32rr killed $eax, $ebx, implicit-def dead $eflags
+    $eax = IMUL32rr killed $eax, $ebx, implicit-def dead $eflags
+    $esi = SUB32rr killed $esi, $edx, implicit-def $eflags
+    JCC_1 %bb.2, 5, implicit killed $eflags
+
+  bb.3:
+    successors: %bb.1(0x40000000), %bb.4(0x40000000)
+    liveins: $ecx, $edx
+
+    $ecx = SUB32rr killed $ecx, $edx, implicit-def $eflags
+    JCC_1 %bb.1, 5, implicit killed $eflags
+
+  bb.4:
+    RET 0
+...
+
+---
+# CHECK-LABEL: name: unroll_five
+# CHECK: bb.1:
+# CHECK-COUNT-5: $eax = ADD32rr
+# CHECK-NOT: JCC_1 %bb.1, 5
+name: unroll_five
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $eax = MOV32ri 1
+    $ebx = MOV32ri 2
+    $ecx = MOV32ri 5
+    $edx = MOV32ri 1
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $eax, $ebx, $ecx, $edx
+
+    $eax = ADD32rr killed $eax, $ebx, implicit-def dead $eflags
+    $ecx = SUB32rr killed $ecx, $edx, implicit-def $eflags
+    JCC_1 %bb.1, 5, implicit killed $eflags
+
+  bb.2:
+    RET 0
+...
+
+---
+# CHECK-LABEL: name: zero_trip
+# CHECK: bb.1:
+# CHECK: $eax = ADD32rr
+# CHECK: JCC_1 %bb.1, 5
+name: zero_trip
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $eax = MOV32ri 7
+    $ebx = MOV32ri 4
+    $ecx = MOV32ri 0
+    $edx = MOV32ri 1
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $eax, $ebx, $ecx, $edx
+
+    $eax = ADD32rr killed $eax, $ebx, implicit-def dead $eflags
+    $ecx = SUB32rr killed $ecx, $edx, implicit-def $eflags
+    JCC_1 %bb.1, 5, implicit killed $eflags
+
+  bb.2:
+    RET 0
+...
+
+---
+# CHECK-LABEL: name: non_self_latch
+# CHECK: bb.1:
+# CHECK-COUNT-1: $eax = ADD32rr
+# CHECK: bb.2:
+# CHECK: JCC_1 %bb.1, 5
+name: non_self_latch
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $eax = MOV32ri 9
+    $ebx = MOV32ri 2
+    $ecx = MOV32ri 3
+    $edx = MOV32ri 1
+    JMP_1 %bb.1
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    liveins: $eax, $ebx, $ecx, $edx
+
+    $eax = ADD32rr killed $eax, $ebx, implicit-def dead $eflags
+    JMP_1 %bb.2
+
+  bb.2:
+    successors: %bb.1(0x40000000), %bb.3(0x40000000)
+    liveins: $ecx, $edx
+
+    $ecx = SUB32rr killed $ecx, $edx, implicit-def $eflags
+    JCC_1 %bb.1, 5, implicit killed $eflags
+
+  bb.3:
+    RET 0
+...

@@ -1,0 +1,83 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/ShkrebkoM_BACKEND%shlibext \
+# RUN: -run-pass=shkrebko-pass %s -o - | FileCheck %s
+
+
+--- |
+  define i32 @readPtr(ptr %p) {
+    %val = load i32, ptr %p
+    ret i32 %val
+  }
+
+  define i32 @noPtr(i32 %x) {
+    ret i32 %x
+  }
+
+  define i32 @array_access(ptr %arr, i64 %idx) {
+    %gep = getelementptr i32, ptr %arr, i64 %idx
+    %val = load i32, ptr %gep
+    ret i32 %val
+  }
+...
+
+---
+# CHECK-LABEL: name: readPtr
+# CHECK: CMP64ri8
+# CHECK-NEXT: JCC_1
+# CHECK-NEXT: JMP_1
+# CHECK: MOV32rm
+
+name:            readPtr
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body:             |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: noPtr
+# CHECK-NOT: CMP64ri8
+# CHECK: COPY
+
+name:            noPtr
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr32 }
+liveins:
+  - { reg: '$edi', virtual-reg: '' }
+body:             |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    $eax = COPY %0
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: array_access
+# CHECK-NOT: CMP64ri8
+# CHECK: MOV32rm
+
+name:            array_access
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64_nosp }
+  - { id: 2, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body:             |
+  bb.0:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64_nosp = COPY $rsi
+    %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+    $eax = COPY %2
+    RET 0, $eax

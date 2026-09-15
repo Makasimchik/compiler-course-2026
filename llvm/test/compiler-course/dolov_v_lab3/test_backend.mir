@@ -1,0 +1,81 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu -load %llvmshlibdir/dolov_v_lab3_BACKEND%shlibext -run-pass=inc-dec-to-add-sub %s -o - | FileCheck %s
+
+---
+name:            test_inc_dec_folding
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $al, $bx, $ecx, $rdx, $r12, $r13, $r14, $r15
+
+    ; CHECK: $al = ADD8ri $al, 5, implicit-def $eflags
+    $al = INC8r $al, implicit-def $eflags
+    $al = INC8r $al, implicit-def $eflags
+    $al = INC8r $al, implicit-def $eflags
+    $al = INC8r $al, implicit-def $eflags
+    $al = INC8r $al, implicit-def $eflags
+
+    ; CHECK: $bx = SUB16ri $bx, 3, implicit-def $eflags
+    $bx = INC16r $bx, implicit-def $eflags
+    $bx = DEC16r $bx, implicit-def $eflags
+    $bx = DEC16r $bx, implicit-def $eflags
+    $bx = DEC16r $bx, implicit-def $eflags
+    $bx = DEC16r $bx, implicit-def $eflags
+
+    ; CHECK: $ecx = ADD32ri $ecx, 2, implicit-def $eflags
+    ; CHECK: $edx = ADD32ri $edx, 1, implicit-def $eflags
+    ; CHECK: $ecx = ADD32ri $ecx, 1, implicit-def $eflags
+    $ecx = INC32r $ecx, implicit-def $eflags
+    $ecx = INC32r $ecx, implicit-def $eflags
+    $edx = INC32r $edx, implicit-def $eflags
+    $ecx = INC32r $ecx, implicit-def $eflags
+
+    ; CHECK-NOT: INC64r $r12
+    ; CHECK-NOT: DEC64r $r12
+    ; CHECK-NOT: ADD64ri32 $r12
+    $r12 = INC64r $r12, implicit-def $eflags
+    $r12 = INC64r $r12, implicit-def $eflags
+    $r12 = DEC64r $r12, implicit-def $eflags
+    $r12 = DEC64r $r12, implicit-def $eflags
+
+    ; CHECK: $r13d = ADD32ri $r13d, 7, implicit-def $eflags
+    $r13d = INC32r $r13d, implicit-def $eflags
+    $r13d = INC32r $r13d, implicit-def $eflags
+    $r13d = INC32r $r13d, implicit-def $eflags
+    $r13d = INC32r $r13d, implicit-def $eflags
+    $r13d = INC32r $r13d, implicit-def $eflags
+    $r13d = INC32r $r13d, implicit-def $eflags
+    $r13d = INC32r $r13d, implicit-def $eflags
+
+    ; CHECK: $r14 = ADD64ri32 $r14, 2, implicit-def $eflags
+    ; CHECK: $r15 = MOV64rr $r14
+    ; CHECK: $r14 = ADD64ri32 $r14, 1, implicit-def $eflags
+    $r14 = INC64r $r14, implicit-def $eflags
+    $r14 = INC64r $r14, implicit-def $eflags
+    $r15 = MOV64rr $r14
+    $r14 = INC64r $r14, implicit-def $eflags
+
+    RET64
+
+---
+name:            test_multiple_blocks
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $edi, $esi
+    ; CHECK: $edi = ADD32ri $edi, 3, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def $eflags
+    $edi = INC32r $edi, implicit-def $eflags
+    JMP_1 %bb.1
+
+  bb.1:
+    liveins: $edi, $esi
+    ; CHECK: $esi = SUB32ri $esi, 2, implicit-def $eflags
+    ; CHECK: $edi = SUB32ri $edi, 4, implicit-def $eflags
+    $esi = DEC32r $esi, implicit-def $eflags
+    $esi = DEC32r $esi, implicit-def $eflags
+    $edi = DEC32r $edi, implicit-def $eflags
+    $edi = DEC32r $edi, implicit-def $eflags
+    $edi = DEC32r $edi, implicit-def $eflags
+    $edi = DEC32r $edi, implicit-def $eflags
+    RET64

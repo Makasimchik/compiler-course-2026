@@ -1,0 +1,100 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu -load=%llvmshlibdir/fedoseev_lab3_BACKEND%shlibext -run-pass=null-check-x86 %s -o - | FileCheck %s
+
+--- |
+  declare void @check_null()
+
+  define i32 @get_first(ptr %p) {
+    %val = load i32, ptr %p
+    ret i32 %val
+  }
+
+  define i32 @mix_ops(ptr %p) {
+    %val = load i32, ptr %p
+    %add = add i32 %val, 7
+    store i32 %add, ptr %p
+    %val2 = load i32, ptr %p
+    ret i32 %val2
+  }
+
+  define void @already_checked(ptr %p) {
+    call void @check_null()
+    %val = load i32, ptr %p
+    ret void
+  }
+
+  define i32 @two_ptrs(ptr %a, ptr %b) {
+    %x = load i32, ptr %a
+    %y = load i32, ptr %b
+    %z = add i32 %x, %y
+    ret i32 %z
+  }
+
+--- # get_first
+# CHECK-LABEL: name: get_first
+# CHECK: TEST64rr
+# CHECK: JCC_1
+# CHECK: MOV32rm
+name: get_first
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+--- # mix_ops
+# CHECK-LABEL: name: mix_ops
+# CHECK: TEST64rr
+# CHECK: MOV32rm
+# CHECK: MOV32mr
+# CHECK: MOV32rm
+name: mix_ops
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %2:gr32 = ADD32ri %1, 7, implicit-def dead $eflags
+    MOV32mr %0, 1, $noreg, 0, $noreg, %2
+    %3:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %3
+    RET 0, $eax
+
+--- # already_checked
+# CHECK-LABEL: name: already_checked
+# CHECK: CALL64pcrel32 @check_null
+# CHECK-NOT: TEST64rr
+# CHECK: MOV32rm
+name: already_checked
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    $rdi = COPY %0
+    CALL64pcrel32 @check_null
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+--- # two_ptrs
+# CHECK-LABEL: name: two_ptrs
+# CHECK: TEST64rr
+# CHECK: MOV32rm
+# CHECK: TEST64rr
+# CHECK: MOV32rm
+name: two_ptrs
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64 = COPY $rsi
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    $eax = COPY %4
+    RET 0, $eax

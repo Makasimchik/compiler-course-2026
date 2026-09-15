@@ -1,0 +1,134 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/sannikov_i_lab3_BACKEND%shlibext \
+# RUN: -run-pass=null-ptr-safety %s -o - | FileCheck %s
+
+
+
+--- |
+  define i32 @_Z7readIntPi(ptr %p) {
+  entry:
+    %0 = load i32, ptr %p
+    ret i32 %0
+  }
+
+  define void @_Z8writeIntPii(ptr %p, i32 %v) {
+  entry:
+    store i32 %v, ptr %p
+    ret void
+  }
+
+  define i32 @_Z7addPtrsPiS_(ptr %a, ptr %b) {
+  entry:
+    %0 = load i32, ptr %a
+    %1 = load i32, ptr %b
+    %2 = add i32 %0, %1
+    ret i32 %2
+  }
+
+  define i32 @_Z6squarei(i32 %x) {
+  entry:
+    %0 = mul i32 %x, %x
+    ret i32 %0
+  }
+---
+
+# CHECK-LABEL: name: _Z7readIntPi
+name: _Z7readIntPi
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      TEST64rr %0, %0
+    ; CHECK-NEXT: JCC_1 2, 5
+    ; CHECK-NEXT: TRAP
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+---
+
+# CHECK-LABEL: name: _Z8writeIntPii
+name: _Z8writeIntPii
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $esi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = COPY $esi
+
+    ; CHECK:      TEST64rr %0, %0
+    ; CHECK-NEXT: JCC_1 2, 5
+    ; CHECK-NEXT: TRAP
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %1
+
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+---
+
+# CHECK-LABEL: name: _Z7addPtrsPiS_
+name: _Z7addPtrsPiS_
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64 = COPY $rsi
+
+    ; CHECK:      TEST64rr %0, %0
+    ; CHECK-NEXT: JCC_1 2, 5
+    ; CHECK-NEXT: TRAP
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+
+    ; CHECK:      TEST64rr %1, %1
+    ; CHECK-NEXT: JCC_1 2, 5
+    ; CHECK-NEXT: TRAP
+    ; CHECK-NEXT: %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    $eax = COPY %4
+    RET 0, $eax
+---
+
+# CHECK-LABEL: name: _Z6squarei
+name: _Z6squarei
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr32 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$edi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+
+    ; CHECK-NOT: TEST64rr
+    ; CHECK-NOT: TRAP
+    ; CHECK:     IMUL32rr
+
+    %1:gr32 = IMUL32rr %0, %0, implicit-def dead $eflags
+    $eax = COPY %1
+    RET 0, $eax

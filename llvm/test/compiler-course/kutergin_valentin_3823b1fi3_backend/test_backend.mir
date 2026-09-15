@@ -1,0 +1,81 @@
+# RUN: llc -load %llvmshlibdir/kutergin_valentin_3823b1fi3_BACKEND%pluginext -run-pass=x86-unroll %s -o - | FileCheck %s
+
+--- |
+  define dso_local void @_Z4loopPii(ptr %a, i32 %n) {
+  entry:
+    %cmp3 = icmp sgt i32 %n, 0
+    br i1 %cmp3, label %for.body.preheader, label %for.cond.cleanup
+  
+  for.body.preheader:
+    %wide.trip.count = zext nneg i32 %n to i64
+    br label %for.body
+  
+  for.cond.cleanup:
+    ret void
+  
+  for.body:
+    %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %for.body ]
+    %0 = shl nuw nsw i64 %indvars.iv, 2
+    %scevgep = getelementptr i8, ptr %a, i64 %0
+    %val = load i32, ptr %scevgep
+    %add = add nsw i32 %val, 10
+    store i32 %add, ptr %scevgep
+    %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+    %exitcond.not = icmp eq i64 %wide.trip.count, %indvars.iv.next
+    br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+  }
+...
+---
+# CHECK-LABEL: name: _Z4loopPii
+# CHECK: bb.3.for.body
+# CHECK: %1:gr64_nosp = PHI
+# CHECK: ADD32mi
+# CHECK: {{%[0-9]+}}:gr64_nosp = PHI
+# CHECK: ADD32mi
+# CHECK: JCC_1 %bb.2, 4, implicit $eflags
+# CHECK-NEXT: JMP_1 %bb.3
+# CHECK-NOT: JMP_1
+
+name:            _Z4loopPii
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64_nosp }
+  - { id: 2, class: gr64 }
+  - { id: 3, class: gr64 }
+  - { id: 4, class: gr32 }
+  - { id: 5, class: gr64 }
+  - { id: 6, class: gr32 }
+  - { id: 7, class: gr32 }
+  - { id: 8, class: gr64 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%3' }
+  - { reg: '$esi', virtual-reg: '%4' }
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $esi
+    %4:gr32 = COPY $esi
+    %3:gr64 = COPY $rdi
+    TEST32rr %4, %4, implicit-def $eflags
+    JCC_1 %bb.2, 14, implicit $eflags
+    JMP_1 %bb.1
+
+  bb.1.for.body.preheader:
+    %6:gr32 = MOV32rr %4
+    %0:gr64 = SUBREG_TO_REG 0, killed %6, %subreg.sub_32bit
+    %7:gr32 = MOV32r0 implicit-def dead $eflags
+    %5:gr64 = SUBREG_TO_REG 0, killed %7, %subreg.sub_32bit
+    JMP_1 %bb.3
+
+  bb.2.for.cond.cleanup:
+    RET 0
+
+  bb.3.for.body:
+    %1:gr64_nosp = PHI %5, %bb.1, %2, %bb.3
+    ADD32mi %3, 4, %1, 0, $noreg, 10, implicit-def dead $eflags
+    %2:gr64 = nuw nsw INC64r %1, implicit-def dead $eflags
+    %8:gr64 = SUB64rr %0, %2, implicit-def $eflags
+    JCC_1 %bb.2, 4, implicit $eflags
+    JMP_1 %bb.3
+
+...

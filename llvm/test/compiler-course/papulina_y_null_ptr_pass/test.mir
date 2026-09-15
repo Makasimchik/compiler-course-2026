@@ -1,0 +1,116 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu -load=%llvmshlibdir/papulina_y_null_ptr_pass_BACKEND%shlibext -run-pass=check-null-ptr-x86 %s -o - | FileCheck %s
+
+--- |
+  declare void @checkPointer(ptr)
+
+  define i32 @test_load(ptr %ptr) {
+  entry:
+    %val = load i32, ptr %ptr
+    ret i32 %val
+  }
+
+  define void @test_store(ptr %ptr, i32 %value) {
+  entry:
+    store i32 %value, ptr %ptr
+    ret void
+  }
+  
+  define i32 @test_checkPointer_call(ptr %ptr) {
+  entry:
+    call void @checkPointer(ptr %ptr)
+    %val = load i32, ptr %ptr
+    ret i32 %val
+  }
+
+  define i32 @test_checkPointer_invalidation(ptr %ptr) { ; проверяет, что checkPointer вставляется, так как регистр был изменен после первого вызова checkPointer
+  entry:
+    call void @checkPointer(ptr %ptr)
+    %ptr2 = getelementptr i8, ptr %ptr, i64 8
+    %val = load i32, ptr %ptr2
+    ret i32 %val
+  }
+...
+---
+name:            test_load
+tracksRegLiveness: true
+body:             |
+  bb.0.entry:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+# CHECK-LABEL: name: test_load
+# CHECK: $rdi = MOV64rr [[REG1:%[0-9]+]]
+# CHECK-NEXT: CALL64pcrel32 &checkPointer
+# CHECK-NEXT: {{%[0-9]+}}:gr32 = MOV32rm [[REG1]], 1, $noreg, 0, $noreg
+
+---
+name:            test_store
+tracksRegLiveness: true
+body:             |
+  bb.0.entry:
+    liveins: $rdi, $esi
+    %1:gr32 = COPY $esi
+    %0:gr64 = COPY $rdi
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+
+# CHECK-LABEL: name: test_store
+# CHECK: $rdi = MOV64rr [[REG2:%[0-9]+]]
+# CHECK-NEXT: CALL64pcrel32 &checkPointer
+# CHECK-NEXT: MOV32mr [[REG2]], 1, $noreg, 0, $noreg, {{%[0-9]+}}
+
+---
+# CHECK-LABEL: name: test_checkPointer_call
+name:            test_checkPointer_call
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+body:             |
+  bb.0.entry:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      [[REG:%[0-9]+]]:gr64 = COPY $rdi
+    ; CHECK:      $rdi = COPY [[REG]]
+    ; CHECK:      CALL64pcrel32 &checkPointer
+
+    $rdi = COPY %0
+    CALL64pcrel32 &checkPointer, implicit $rsp, implicit $ssp, implicit $rdi, implicit-def $rsp
+    
+    ; CHECK-NOT:  CALL64pcrel32 &checkPointer
+    ; CHECK:      %1:gr32 = MOV32rm [[REG]], 1, $noreg, 0, $noreg
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+---
+name:            test_checkPointer_invalidation
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+body:             |
+  bb.0.entry:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+    $rdi = COPY %0
+    CALL64pcrel32 &checkPointer, implicit $rsp, implicit $ssp, implicit $rdi, implicit-def $rsp
+    %0:gr64 = ADD64ri8 %0, 8, implicit-def $eflags
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    
+    ; CHECK-LABEL: name: test_checkPointer_invalidation
+    ; CHECK:      CALL64pcrel32 &checkPointer
+    ; CHECK:      %0:gr64 = ADD64ri8 %0, 8
+    ; CHECK-NEXT: $rdi = MOV64rr %0
+    ; CHECK-NEXT: CALL64pcrel32 &checkPointer
+    
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+
+    $eax = COPY %1
+    RET 0, $eax 
+...

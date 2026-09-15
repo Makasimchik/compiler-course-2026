@@ -1,0 +1,104 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu --load=%llvmshlibdir/shvetsova_k_loop_unrolling_BACKEND%shlibext -run-pass=example-x86 %s -o - | FileCheck %s
+
+# ============================================================
+# 1. Простая counted-петля: 4 итерации
+# ============================================================
+
+---
+name:            loop_test
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: loop_test
+  ; CHECK: bb.1:
+  ; CHECK-COUNT-4: $eax = ADD32ri
+  ; CHECK: CMP32rr $eax, $ecx
+
+  bb.0:
+    $eax = MOV32r0 implicit-def $eflags
+    $ecx = MOV32ri 4
+    JMP_1 %bb.1
+
+  bb.1:
+    liveins: $eax, $ecx
+    $eax = ADD32ri killed $eax, 1, implicit-def $eflags
+    CMP32rr $eax, $ecx, implicit-def $eflags
+    JCC_1 %bb.1, 12, implicit $eflags
+
+  bb.2:
+    RET64
+...
+
+# ============================================================
+# 2. Вложенные циклы: внешний x3, внутренний x2
+# ============================================================
+
+---
+name:            nested_loops
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: nested_loops
+  ; CHECK: bb.2:
+  ; CHECK-COUNT-2: $ecx = ADD32ri
+  ; CHECK: CMP32rr $ecx, $esi
+  ; CHECK: bb.3:
+  ; CHECK-COUNT-3: $eax = ADD32ri
+  ; CHECK: CMP32rr $eax, $edx
+
+  bb.0:
+    $eax = MOV32r0 implicit-def $eflags
+    $edx = MOV32ri 3
+    JMP_1 %bb.1
+
+  bb.1:
+    liveins: $eax, $edx
+    $ecx = MOV32r0 implicit-def $eflags
+    $esi = MOV32ri 2
+    JMP_1 %bb.2
+
+  bb.2:
+    liveins: $ecx, $esi
+    $ecx = ADD32ri killed $ecx, 1, implicit-def $eflags
+    CMP32rr $ecx, $esi, implicit-def $eflags
+    JCC_1 %bb.2, 12, implicit $eflags
+
+  bb.3:
+    liveins: $eax, $edx
+    $eax = ADD32ri killed $eax, 1, implicit-def $eflags
+    CMP32rr $eax, $edx, implicit-def $eflags
+    JCC_1 %bb.1, 12, implicit $eflags
+
+  bb.4:
+    RET64
+...
+
+# ============================================================
+# 3. while-цикл: 5 итераций
+# ============================================================
+
+---
+name:            while_loop
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: while_loop
+  ; CHECK: CMP32rr $eax, $ecx
+  ; CHECK: bb.2:
+  ; CHECK-COUNT-5: $eax = ADD32ri
+
+  bb.0:
+    $eax = MOV32r0 implicit-def $eflags
+    $ecx = MOV32ri 5
+    JMP_1 %bb.1
+
+  bb.1:
+    liveins: $eax, $ecx
+    CMP32rr $eax, $ecx, implicit-def $eflags
+    JCC_1 %bb.2, 12, implicit $eflags
+
+  bb.2:
+    liveins: $eax, $ecx
+    $eax = ADD32ri killed $eax, 1, implicit-def $eflags
+    JMP_1 %bb.1
+
+  bb.3:
+    RET64
+...

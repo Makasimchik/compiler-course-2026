@@ -1,0 +1,182 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/lukin_i_lab3_BACKEND%shlibext \
+# RUN: -run-pass=InliningPass  %s -o - | FileCheck %s
+
+#---ТЕСТ. Большая функция, не должна инлайниться--
+# CHECK-LABEL: name: manager
+# CHECK: CALL64pcrel32
+# CHECK: RET64
+---
+name: heavy_worker
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 1
+    %1:gr32 = AND32ri %0, 1, implicit-def $eflags
+    %2:gr32 = OR32ri %1, 2, implicit-def $eflags
+    %3:gr32 = XOR32ri %2, 3, implicit-def $eflags
+    %4:gr32 = SUB32ri %3, 4, implicit-def $eflags
+    %5:gr32 = ADD32ri %4, 5, implicit-def $eflags
+    %6:gr32 = MOV32ri 6
+    %7:gr32 = MOV32ri 7
+    %8:gr32 = MOV32ri 8
+    %9:gr32 = MOV32ri 9
+    %10:gr32 = MOV32ri 10
+    %11:gr32 = MOV32ri 11
+    %12:gr32 = MOV32ri 12
+    %13:gr32 = MOV32ri 13
+    %14:gr32 = MOV32ri 14
+    %15:gr32 = MOV32ri 15
+    %16:gr32 = MOV32ri 16
+    RET64
+...
+---
+name: manager
+tracksRegLiveness: true
+body: |
+  bb.0:
+    CALL64pcrel32 @heavy_worker, implicit-def $eax
+    RET64
+
+
+
+#---ТЕСТ. Рекурсия--
+# CHECK-LABEL: name: loop_proxy
+# CHECK: XOR32ri
+# CHECK: XOR32ri
+# CHECK: XOR32ri
+# CHECK: XOR32ri
+# CHECK: CALL64pcrel32
+# CHECK: RET64
+---
+name: loop_proxy
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %5:gr32 = COPY $edi
+    %6:gr32 = XOR32ri %5, 255, implicit-def $eflags
+    $edi = COPY %6
+    CALL64pcrel32 @loop_proxy, implicit $edi, implicit-def $eax
+    RET64
+
+
+
+#---ТЕСТ. инлайнинг маленькой функции, должна инлайниться--
+# CHECK-LABEL: name: main_entry
+# CHECK: SUB32ri
+# CHECK-NOT: CALL64pcrel32
+# CHECK: RET64
+---
+name: leaf_sub
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $esi
+    %10:gr32 = COPY $esi
+    %11:gr32 = SUB32ri %10, 7, implicit-def $eflags
+    $eax = COPY %11
+    RET64
+...
+---
+name: main_entry
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $esi
+    CALL64pcrel32 @leaf_sub, implicit $esi, implicit-def $eax
+    RET64
+
+
+
+#---ТЕСТ. Вложенные функции---
+# CHECK-LABEL: name: pipeline_start
+# CHECK: %1:gr32 = AND32ri %0, 15
+# CHECK: %3:gr32 = OR32ri %2, 31
+# CHECK: %5:gr32 = XOR32ri %4, 63
+# CHECK-NOT: CALL64pcrel32
+# CHECK: RET64
+---
+name: stage_final
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %100:gr32 = COPY $edi
+    %101:gr32 = XOR32ri %100, 63, implicit-def $eflags
+    $eax = COPY %101
+    RET64
+...
+---
+name: stage_mid
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %20:gr32 = COPY $edi
+    %21:gr32 = OR32ri %20, 31, implicit-def $eflags
+    $edi = COPY %21
+    CALL64pcrel32 @stage_final, implicit $edi, implicit-def $eax
+    RET64
+...
+---
+name: pipeline_start
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    %1:gr32 = AND32ri %0, 15, implicit-def $eflags
+    $edi = COPY %1
+    CALL64pcrel32 @stage_mid, implicit $edi, implicit-def $eax
+    RET64
+
+# CHECK-LABEL: name: foo3
+# CHECK: ADD32ri
+# CHECK: IMUL32rr
+# CHECK: SUB32rr
+# CHECK: IMUL32rr
+# CHECK: IMUL32rr
+# CHECK-NOT: CALL64pcrel32
+# CHECK: RET64
+---
+name: foo1
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    %1:gr32 = IMUL32rr %0, %0, implicit-def $eflags
+    $eax = COPY %1
+    RET64
+...
+---
+name: foo2
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    %1:gr32 = ADD32ri %0, 10, implicit-def $eflags
+    $edi = COPY %0
+    CALL64pcrel32 @foo1, implicit $edi, implicit-def $eax
+    %2:gr32 = COPY $eax
+    %3:gr32 = SUB32rr %1, %2, implicit-def $eflags
+    $eax = COPY %3
+    RET64
+...
+---
+name: foo3
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $edi
+    %0:gr32 = COPY $edi
+    $edi = COPY %0
+    CALL64pcrel32 @foo2, implicit $edi, implicit-def $eax
+    %1:gr32 = COPY $eax
+    $edi = COPY %1
+    CALL64pcrel32 @foo1, implicit $edi, implicit-def $eax
+    %2:gr32 = COPY $eax
+    %3:gr32 = IMUL32rr %1, %2, implicit-def $eflags
+    $eax = COPY %3
+    RET64

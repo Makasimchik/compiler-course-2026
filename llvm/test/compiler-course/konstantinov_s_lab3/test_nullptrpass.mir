@@ -1,0 +1,179 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/konstantinov_s_lab3_BACKEND%shlibext \
+# RUN: -run-pass=nullptrcheckpass %s -o - | FileCheck %s
+
+# Source files
+#
+# test.cpp
+#
+# int get_first(int* p) {
+#   return *p;
+# }
+#
+# int mix_ops(int* p) {
+#   int x = *p;
+#   x = x + 7;
+#   *p = x;
+#   return *p;
+# }
+#
+# void double_store(int* p, int v) {
+#   *p = v;
+#   *p = v + 2;
+# }
+#
+# int two_ptrs(int* a, int* b) {
+#   int x = *a;
+#   int y = *b;
+#   return x + y;
+# }
+
+--- |
+  define i32 @_Z9get_firstPi(ptr %p) {
+  entry:
+    %0 = load i32, ptr %p
+    ret i32 %0
+  }
+
+  define i32 @_Z12mix_opsPi(ptr %p) {
+  entry:
+    %0 = load i32, ptr %p
+    %1 = add i32 %0, 7
+    store i32 %1, ptr %p
+    %2 = load i32, ptr %p
+    ret i32 %2
+  }
+
+  define void @_Z11double_storePii(ptr %p, i32 %v) {
+  entry:
+    store i32 %v, ptr %p
+    %1 = add i32 %v, 2
+    store i32 %1, ptr %p
+    ret void
+  }
+
+  define i32 @_Z10two_ptrsPiS_(ptr %a, ptr %b) {
+  entry:
+    %1 = load i32, ptr %a
+    %2 = load i32, ptr %b
+    %3 = add i32 %1, %2
+    ret i32 %3
+  }
+---
+
+# CHECK-LABEL: name: _Z9get_firstPi
+name: _Z9get_firstPi
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+---
+
+# CHECK-LABEL: name: _Z12mix_opsPi
+name: _Z12mix_opsPi
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    %0:gr64 = COPY $rdi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %2
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: %3:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %2:gr32 = ADD32ri %1, 7, implicit-def dead $eflags
+    MOV32mr %0, 1, $noreg, 0, $noreg, %2
+    %3:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %3
+    RET 0, $eax
+---
+
+# CHECK-LABEL: name: _Z11double_storePii
+name: _Z11double_storePii
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $esi
+    %0:gr64 = COPY $rdi
+    %1:gr32 = COPY $esi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %1
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %2
+
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    %2:gr32 = ADD32ri %1, 2, implicit-def dead $eflags
+    MOV32mr %0, 1, $noreg, 0, $noreg, %2
+    RET 0
+---
+
+# CHECK-LABEL: name: _Z10two_ptrsPiS_
+name: _Z10two_ptrsPiS_
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+    %0:gr64 = COPY $rdi
+    %1:gr64 = COPY $rsi
+
+    ; CHECK:      $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+
+    ; CHECK:      $rdi = COPY %1
+    ; CHECK-NEXT: CALL64pcrel32 {{.*}}check_null
+    ; CHECK-NEXT: %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    $eax = COPY %4
+    RET 0, $eax

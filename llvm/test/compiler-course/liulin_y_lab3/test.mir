@@ -1,0 +1,255 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/liulin_y_lab3_BACKEND%shlibext -run-pass=InliningPass %s -o - | FileCheck %s
+
+---
+name: leaf_sub
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 10
+    %1:gr32 = ADD32ri %0, 5, implicit-def $eflags
+    RET64
+
+...
+---
+name: main_entry
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: main_entry
+    ; CHECK: MOV32ri
+    ; CHECK: ADD32ri
+    ; CHECK-NOT: CALL64pcrel32
+    ; CHECK: RET64
+    CALL64pcrel32 @leaf_sub
+    RET64
+
+...
+---
+name: stage_final
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 7
+    %1:gr32 = AND32ri %0, 3, implicit-def $eflags
+    %2:gr32 = OR32ri %0, 4, implicit-def $eflags
+    RET64
+
+...
+---
+name: stage_mid
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 1
+    %1:gr32 = XOR32ri %0, 2, implicit-def $eflags
+    CALL64pcrel32 @stage_final
+    RET64
+
+...
+---
+name: pipeline_start
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: pipeline_start
+    ; CHECK: MOV32ri
+    ; CHECK: XOR32ri
+    ; CHECK: MOV32ri
+    ; CHECK: AND32ri
+    ; CHECK: OR32ri
+    ; CHECK-NOT: CALL64pcrel32
+    ; CHECK: RET64
+    CALL64pcrel32 @stage_mid
+    RET64
+
+...
+---
+name: foo1
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 2
+    %1:gr32 = IMUL32rr %0, %0, implicit-def $eflags
+    RET64
+
+...
+---
+name: foo2
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 3
+    %1:gr32 = ADD32ri %0, 1, implicit-def $eflags
+    %2:gr32 = IMUL32rr %1, %1, implicit-def $eflags
+    CALL64pcrel32 @foo1
+    RET64
+
+...
+---
+name: foo3
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: foo3
+    ; CHECK: MOV32ri
+    ; CHECK: ADD32ri
+    ; CHECK: IMUL32rr
+    ; CHECK: MOV32ri
+    ; CHECK: IMUL32rr
+    ; CHECK: MOV32ri
+    ; CHECK: SUB32ri
+    ; CHECK-NOT: CALL64pcrel32
+    ; CHECK: RET64
+    CALL64pcrel32 @foo2
+    %0:gr32 = MOV32ri 100
+    %1:gr32 = SUB32ri %0, 10, implicit-def $eflags
+    RET64
+
+...
+---
+name: recurse1
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: recurse1
+    ; CHECK-COUNT-16: MOV32ri
+    ; CHECK: CALL64pcrel32
+    ; CHECK: RET64
+    %0:gr32 = MOV32ri 1
+    %1:gr32 = MOV32ri 2
+    %2:gr32 = MOV32ri 3
+    %3:gr32 = MOV32ri 4
+    %4:gr32 = MOV32ri 5
+    %5:gr32 = MOV32ri 6
+    %6:gr32 = MOV32ri 7
+    %7:gr32 = MOV32ri 8
+    CALL64pcrel32 @recurse1
+    RET64
+
+...
+---
+name: recurse2
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: recurse2
+    ; CHECK-COUNT-4: MOV32ri
+    ; CHECK-COUNT-4: ADD32ri
+    ; CHECK: CALL64pcrel32
+    ; CHECK: RET64
+    %0:gr32 = MOV32ri 1
+    %1:gr32 = ADD32ri %0, 1, implicit-def $eflags
+    CALL64pcrel32 @recurse2
+    RET64
+
+...
+---
+name: recurse3
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: recurse3
+    ; CHECK-COUNT-4: MOV32ri
+    ; CHECK-COUNT-4: ADD32ri
+    ; CHECK: CALL64pcrel32
+    ; CHECK: RET64
+    %0:gr32 = MOV32ri 1
+    %1:gr32 = ADD32ri %0, 1, implicit-def $eflags
+    CALL64pcrel32 @recurse3
+    RET64
+
+...
+---
+name: heavy_worker
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 0
+    %1:gr32 = MOV32ri 1
+    %2:gr32 = MOV32ri 2
+    %3:gr32 = MOV32ri 3
+    %4:gr32 = MOV32ri 4
+    %5:gr32 = MOV32ri 5
+    %6:gr32 = MOV32ri 6
+    %7:gr32 = MOV32ri 7
+    %8:gr32 = MOV32ri 8
+    %9:gr32 = MOV32ri 9
+    %10:gr32 = MOV32ri 10
+    %11:gr32 = MOV32ri 11
+    %12:gr32 = MOV32ri 12
+    %13:gr32 = MOV32ri 13
+    %14:gr32 = MOV32ri 14
+    %15:gr32 = MOV32ri 15
+    RET64
+
+...
+---
+name: manager
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: manager
+    ; CHECK: CALL64pcrel32 @heavy_worker
+    ; CHECK-NOT: MOV32ri
+    CALL64pcrel32 @heavy_worker
+    RET64
+
+...
+---
+name: callee_blacklist
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: callee_blacklist
+    %0:gr32 = MOV32ri 42
+    RET64
+
+...
+---
+name: caller_blacklist
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: caller_blacklist
+    ; CHECK: MOV32ri
+    ; CHECK: CALL64pcrel32 @callee_blacklist
+    ; CHECK: RET64
+    CALL64pcrel32 @callee_blacklist
+    CALL64pcrel32 @callee_blacklist
+    RET64
+
+...
+---
+name: external_func
+tracksRegLiveness: true
+body: |
+  bb.0:
+    %0:gr32 = MOV32ri 0
+    %1:gr32 = MOV32ri 1
+    %2:gr32 = MOV32ri 2
+    %3:gr32 = MOV32ri 3
+    %4:gr32 = MOV32ri 4
+    %5:gr32 = MOV32ri 5
+    %6:gr32 = MOV32ri 6
+    %7:gr32 = MOV32ri 7
+    %8:gr32 = MOV32ri 8
+    %9:gr32 = MOV32ri 9
+    %10:gr32 = MOV32ri 10
+    %11:gr32 = MOV32ri 11
+    %12:gr32 = MOV32ri 12
+    %13:gr32 = MOV32ri 13
+    %14:gr32 = MOV32ri 14
+    %15:gr32 = MOV32ri 15
+    RET64
+
+...
+---
+name: caller_external
+tracksRegLiveness: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: caller_external
+    ; CHECK: CALL64pcrel32 @external_func
+    ; CHECK-NOT: MOV32ri
+    CALL64pcrel32 @external_func
+    RET64

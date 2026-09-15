@@ -1,0 +1,85 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu -load %llvmshlibdir/ashihmin_d_lab3_BACKEND%shlibext -run-pass=ashihmin_d_lab3 %s -o - | FileCheck %s
+
+---
+name:            check_accumulation_32
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $eax
+    ; CHECK-LABEL: name: check_accumulation_32
+    ; CHECK: $eax = ADD32ri $eax, 4, implicit-def $eflags
+    ; CHECK-NOT: INC32r
+    $eax = INC32r $eax, implicit-def dead $eflags, implicit $eax
+    $eax = INC32r $eax, implicit-def dead $eflags, implicit $eax
+    $eax = INC32r $eax, implicit-def dead $eflags, implicit $eax
+    $eax = INC32r $eax, implicit-def dead $eflags, implicit $eax
+    RET64 $eax
+
+---
+name:            check_reduction_64
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $rax
+    ; CHECK-LABEL: name: check_reduction_64
+    ; CHECK: $rax = SUB64ri32 $rax, 3, implicit-def $eflags
+    ; CHECK-NOT: DEC64r
+    $rax = DEC64r $rax, implicit-def dead $eflags, implicit $rax
+    $rax = DEC64r $rax, implicit-def dead $eflags, implicit $rax
+    $rax = DEC64r $rax, implicit-def dead $eflags, implicit $rax
+    RET64 $rax
+
+---
+name:            check_cancellation
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $edi
+    ; CHECK-LABEL: name: check_cancellation
+    ; CHECK-NOT: INC32r
+    ; CHECK-NOT: DEC32r
+    ; CHECK-NOT: ADD32ri
+    $edi = INC32r $edi, implicit-def dead $eflags, implicit $edi
+    $edi = DEC32r $edi, implicit-def dead $eflags, implicit $edi
+    RET64 $edi
+
+---
+name:            check_mixed_math
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $edx
+    ; CHECK-LABEL: name: check_mixed_math
+    ; CHECK: $edx = ADD32ri $edx, 2, implicit-def $eflags
+    $edx = INC32r $edx, implicit-def dead $eflags, implicit $edx
+    $edx = INC32r $edx, implicit-def dead $eflags, implicit $edx
+    $edx = INC32r $edx, implicit-def dead $eflags, implicit $edx
+    $edx = DEC32r $edx, implicit-def dead $eflags, implicit $edx
+    RET64 $edx
+
+---
+name:            check_byte_regs
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $al
+    ; CHECK-LABEL: name: check_byte_regs
+    ; CHECK: $al = SUB8ri $al, 2, implicit-def $eflags
+    $al = DEC8r $al, implicit-def dead $eflags, implicit $al
+    $al = DEC8r $al, implicit-def dead $eflags, implicit $al
+    RET64 $al
+
+---
+name:            check_interleaved_registers
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $eax, $ebx
+    ; CHECK-LABEL: name: check_interleaved_registers
+    ; CHECK: $eax = ADD32ri $eax, 2, implicit-def $eflags
+    ; CHECK: $ebx = SUB32ri $ebx, 2, implicit-def $eflags
+    $eax = INC32r $eax, implicit-def dead $eflags, implicit $eax
+    $eax = INC32r $eax, implicit-def dead $eflags, implicit $eax
+    $ebx = DEC32r $ebx, implicit-def dead $eflags, implicit $ebx
+    $ebx = DEC32r $ebx, implicit-def dead $eflags, implicit $ebx
+    RET64 $eax

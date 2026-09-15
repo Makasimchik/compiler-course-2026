@@ -1,0 +1,277 @@
+# RUN: llc -mtriple x86_64-unknown-linux-gnu --load=%llvmshlibdir/kazennova_a_lab3_BACKEND%shlibext -run-pass=null-check -o - %s | FileCheck %s
+
+--- |
+  declare void @verify_pointer()
+
+  define i32 @test_read(ptr %p) {
+    %v = load i32, ptr %p
+    ret i32 %v
+  }
+
+  define void @test_write(ptr %p, i32 %val) {
+    store i32 %val, ptr %p
+    ret void
+  }
+
+  define i32 @test_array(ptr %arr, i64 %idx) {
+    %ptr = getelementptr i32, ptr %arr, i64 %idx
+    %v = load i32, ptr %ptr
+    ret i32 %v
+  }
+
+  define i32 @test_two_pointers(ptr %a, ptr %b) {
+    %va = load i32, ptr %a
+    %vb = load i32, ptr %b
+    %sum = add i32 %va, %vb
+    ret i32 %sum
+  }
+
+  define i32 @test_no_ptr(i32 %x) {
+    %y = mul i32 %x, 2
+    ret i32 %y
+  }
+
+  define i32 @test_stack_ptr(ptr %p) {
+    %stack = alloca i32
+    %v1 = load i32, ptr %p
+    %v2 = load i32, ptr %stack
+    %sum = add i32 %v1, %v2
+    ret i32 %sum
+  }
+
+  define void @test_multiple_derefs(ptr %p, i32 %x) {
+    store i32 %x, ptr %p
+    %v = load i32, ptr %p
+    %sum = add i32 %v, 1
+    store i32 %sum, ptr %p
+    ret void
+  }
+
+  define i32 @test_existing_check(ptr %p) {
+    %v = load i32, ptr %p
+    ret i32 %v
+  }
+
+---
+name: test_read
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    ; CHECK-LABEL: name: test_read
+    ; CHECK:      %0:gr64 = COPY $rdi
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    ; CHECK-NEXT: $eax = COPY %1
+    ; CHECK-NEXT: RET 0, $eax
+    %0:gr64 = COPY $rdi
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
+
+---
+name: test_write
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $esi
+    ; CHECK-LABEL: name: test_write
+    ; CHECK:      %1:gr32 = COPY $esi
+    ; CHECK-NEXT: %0:gr64 = COPY $rdi
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    ; CHECK-NEXT: RET 0
+    %1:gr32 = COPY $esi
+    %0:gr64 = COPY $rdi
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    RET 0
+
+---
+name: test_array
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64_nosp }
+  - { id: 2, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+    ; CHECK-LABEL: name: test_array
+    ; CHECK:      %1:gr64_nosp = COPY $rsi
+    ; CHECK-NEXT: %0:gr64 = COPY $rdi
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+    ; CHECK-NEXT: $eax = COPY %2
+    ; CHECK-NEXT: RET 0, $eax
+    %1:gr64_nosp = COPY $rsi
+    %0:gr64 = COPY $rdi
+    %2:gr32 = MOV32rm %0, 4, %1, 0, $noreg
+    $eax = COPY %2
+    RET 0, $eax
+
+---
+name: test_two_pointers
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$rsi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $rsi
+    ; CHECK-LABEL: name: test_two_pointers
+    ; CHECK:      %1:gr64 = COPY $rsi
+    ; CHECK-NEXT: %0:gr64 = COPY $rdi
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    ; CHECK-NEXT: $rdi = COPY %1
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    ; CHECK-NEXT: %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    ; CHECK-NEXT: $eax = COPY %4
+    ; CHECK-NEXT: RET 0, $eax
+    %1:gr64 = COPY $rsi
+    %0:gr64 = COPY $rdi
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    $eax = COPY %4
+    RET 0, $eax
+
+---
+# CHECK-LABEL: name: test_no_ptr
+# CHECK-NOT: CALL64pcrel32
+name: test_no_ptr
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr32 }
+liveins:
+  - { reg: '$edi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $edi
+    ; CHECK:      %0:gr32 = COPY $edi
+    ; CHECK-NEXT: %1:gr32 = SHL32ri %0, 1, implicit-def dead $eflags
+    ; CHECK-NEXT: $eax = COPY %1
+    ; CHECK-NEXT: RET 0, $eax
+    %0:gr32 = COPY $edi
+    %1:gr32 = SHL32ri %0, 1, implicit-def dead $eflags
+    $eax = COPY %1
+    RET 0, $eax
+
+---
+name: test_stack_ptr
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr64 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 4, alignment: 4 }
+stack:
+  - { id: 0, name: stack, type: default, offset: 0, size: 4, alignment: 4 }
+body: |
+  bb.0:
+    liveins: $rdi
+    ; CHECK-LABEL: name: test_stack_ptr
+    ; CHECK:      %0:gr64 = COPY $rdi
+    ; CHECK-NEXT: %1:gr64 = LEA64r %stack.0.stack, 1, $noreg, 0, $noreg
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    ; CHECK-NEXT: $rdi = COPY %1
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    ; CHECK-NEXT: %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    ; CHECK-NEXT: $eax = COPY %4
+    ; CHECK-NEXT: RET 0, $eax
+    %0:gr64 = COPY $rdi
+    %1:gr64 = LEA64r %stack.0.stack, 1, $noreg, 0, $noreg
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %3:gr32 = MOV32rm %1, 1, $noreg, 0, $noreg
+    %4:gr32 = ADD32rr %2, %3, implicit-def dead $eflags
+    $eax = COPY %4
+    RET 0, $eax
+
+---
+name: test_multiple_derefs
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gr64 }
+  - { id: 1, class: gr32 }
+  - { id: 2, class: gr32 }
+  - { id: 3, class: gr32 }
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+  - { reg: '$esi', virtual-reg: '%1' }
+body: |
+  bb.0:
+    liveins: $rdi, $esi
+    ; CHECK-LABEL: name: test_multiple_derefs
+    ; CHECK:      %1:gr32 = COPY $esi
+    ; CHECK-NEXT: %0:gr64 = COPY $rdi
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    ; CHECK-NEXT: %3:gr32 = ADD32ri %2, 1, implicit-def dead $eflags
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: MOV32mr %0, 1, $noreg, 0, $noreg, %3
+    ; CHECK-NEXT: RET 0
+    %1:gr32 = COPY $esi
+    %0:gr64 = COPY $rdi
+    MOV32mr %0, 1, $noreg, 0, $noreg, %1
+    %2:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    %3:gr32 = ADD32ri %2, 1, implicit-def dead $eflags
+    MOV32mr %0, 1, $noreg, 0, $noreg, %3
+    RET 0
+
+---
+name: test_existing_check
+tracksRegLiveness: true
+liveins:
+  - { reg: '$rdi', virtual-reg: '%0' }
+body: |
+  bb.0:
+    liveins: $rdi
+    ; CHECK-LABEL: name: test_existing_check
+    ; CHECK:      %0:gr64 = COPY $rdi
+    ; CHECK-NEXT: $rdi = COPY %0
+    ; CHECK-NEXT: CALL64pcrel32 &verify_pointer
+    ; CHECK-NEXT: %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    ; CHECK-NEXT: $eax = COPY %1
+    ; CHECK-NEXT: RET 0, $eax
+    %0:gr64 = COPY $rdi
+    $rdi = COPY %0
+    CALL64pcrel32 &verify_pointer   ; существующий вызов (теперь с &)
+    %1:gr32 = MOV32rm %0, 1, $noreg, 0, $noreg
+    $eax = COPY %1
+    RET 0, $eax
