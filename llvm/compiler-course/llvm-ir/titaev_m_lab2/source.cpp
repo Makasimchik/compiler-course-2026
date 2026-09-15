@@ -1,8 +1,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 
@@ -10,74 +9,69 @@ using namespace llvm;
 
 namespace {
 
-class RemainderTransformVisitor
-    : public InstVisitor<RemainderTransformVisitor, bool> {
-public:
-  bool run(Function &F) {
+struct ReplaceAddPass : public PassInfoMixin<ReplaceAddPass> {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    Function *AddFunction = M.getFunction("add");
+
+    if (!AddFunction)
+      return PreservedAnalyses::all();
+
+    if (AddFunction->arg_size() != 2)
+      return PreservedAnalyses::all();
+
+    FunctionType *AddType = AddFunction->getFunctionType();
     bool Changed = false;
-    for (auto &BB : F) {
-      for (auto I = BB.begin(), E = BB.end(); I != E;) {
-        Instruction &Inst = *I++;
-        Changed |= visit(Inst);
+
+    for (Function &F : M) {
+      // Саму функцию add не меняем
+      if (&F == AddFunction)
+        continue;
+
+      for (BasicBlock &BB : F) {
+        for (auto It = BB.begin(), End = BB.end(); It != End;) {
+          Instruction &I = *It++;
+
+          auto *BinOp = dyn_cast<BinaryOperator>(&I);
+          if (!BinOp)
+            continue;
+
+          if (BinOp->getOpcode() != Instruction::Add)
+            continue;
+
+          Value *Op0 = BinOp->getOperand(0);
+          Value *Op1 = BinOp->getOperand(1);
+
+          // Типы операндов должны совпадать
+          // с типами аргументов функции add
+          if (AddType->getParamType(0) != Op0->getType())
+            continue;
+
+          if (AddType->getParamType(1) != Op1->getType())
+            continue;
+
+          // Тип результата тоже должен совпадать
+          if (AddType->getReturnType() != BinOp->getType())
+            continue;
+
+          IRBuilder<> Builder(BinOp);
+
+          CallInst *Call = Builder.CreateCall(AddFunction, {Op0, Op1});
+
+          BinOp->replaceAllUsesWith(Call);
+          Call->takeName(BinOp);
+          BinOp->eraseFromParent();
+
+          Changed = true;
+        }
       }
     }
-    return Changed;
-  }
 
-  bool visitInstruction(Instruction &I) { return false; }
-
-  bool visitSRem(BinaryOperator &I) {
-    IRBuilder<> Builder(&I);
-    Value *Op0 = I.getOperand(0);
-    Value *Op1 = I.getOperand(1);
-
-    Value *Quotient = Builder.CreateSDiv(Op0, Op1, "ext.s.div");
-    Value *Product = Builder.CreateMul(Quotient, Op1, "ext.s.mul");
-    Value *Result = Builder.CreateSub(Op0, Product, "ext.s.rem");
-
-    I.replaceAllUsesWith(Result);
-    I.eraseFromParent();
-    return true;
-  }
-
-  bool visitURem(BinaryOperator &I) {
-    IRBuilder<> Builder(&I);
-    Value *Op0 = I.getOperand(0);
-    Value *Op1 = I.getOperand(1);
-
-    Value *Quotient = Builder.CreateUDiv(Op0, Op1, "ext.u.div");
-    Value *Product = Builder.CreateMul(Quotient, Op1, "ext.u.mul");
-    Value *Result = Builder.CreateSub(Op0, Product, "ext.u.rem");
-
-    I.replaceAllUsesWith(Result);
-    I.eraseFromParent();
-    return true;
-  }
-
-  bool visitFRem(BinaryOperator &I) {
-    IRBuilder<> Builder(&I);
-    Value *Op0 = I.getOperand(0);
-    Value *Op1 = I.getOperand(1);
-
-    Value *FDiv = Builder.CreateFDiv(Op0, Op1, "ext.f.div");
-    Value *Trunc = Builder.CreateUnaryIntrinsic(Intrinsic::trunc, FDiv, nullptr,
-                                                "ext.f.trunc");
-    Value *FMul = Builder.CreateFMul(Trunc, Op1, "ext.f.mul");
-    Value *FSub = Builder.CreateFSub(Op0, FMul, "ext.f.rem");
-
-    I.replaceAllUsesWith(FSub);
-    I.eraseFromParent();
-    return true;
-  }
-};
-
-struct RemDecompositionPass : public PassInfoMixin<RemDecompositionPass> {
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
-    RemainderTransformVisitor Visitor;
-    if (Visitor.run(F))
+    if (Changed)
       return PreservedAnalyses::none();
+
     return PreservedAnalyses::all();
   }
+
   static bool isRequired() { return true; }
 };
 
@@ -85,13 +79,13 @@ struct RemDecompositionPass : public PassInfoMixin<RemDecompositionPass> {
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "RemDecompositionPlugin", "3.0",
+  return {LLVM_PLUGIN_API_VERSION, "ReplaceAddPlugin", "1.0",
           [](PassBuilder &PB) {
             PB.registerPipelineParsingCallback(
-                [](StringRef Name, FunctionPassManager &FPM,
+                [](StringRef Name, ModulePassManager &MPM,
                    ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "decompose-remainder") {
-                    FPM.addPass(RemDecompositionPass());
+                  if (Name == "replace-add") {
+                    MPM.addPass(ReplaceAddPass());
                     return true;
                   }
                   return false;
