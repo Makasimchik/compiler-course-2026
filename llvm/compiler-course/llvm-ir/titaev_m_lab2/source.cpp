@@ -9,24 +9,28 @@ using namespace llvm;
 
 namespace {
 
-struct ReplaceAddPass : public PassInfoMixin<ReplaceAddPass> {
+static StringRef getFunctionName(unsigned Opcode) {
+  switch (Opcode) {
+  case Instruction::Add:
+    return "add";
+  case Instruction::Sub:
+    return "sub";
+  case Instruction::Mul:
+    return "mul";
+  case Instruction::SDiv:
+    return "sdiv";
+  case Instruction::UDiv:
+    return "udiv";
+  default:
+    return "";
+  }
+}
+
+struct ReplaceBinaryOpsPass : public PassInfoMixin<ReplaceBinaryOpsPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    Function *AddFunction = M.getFunction("add");
-
-    if (!AddFunction)
-      return PreservedAnalyses::all();
-
-    if (AddFunction->arg_size() != 2)
-      return PreservedAnalyses::all();
-
-    FunctionType *AddType = AddFunction->getFunctionType();
     bool Changed = false;
 
     for (Function &F : M) {
-      // Саму функцию add не меняем
-      if (&F == AddFunction)
-        continue;
-
       for (BasicBlock &BB : F) {
         for (auto It = BB.begin(), End = BB.end(); It != End;) {
           Instruction &I = *It++;
@@ -35,27 +39,39 @@ struct ReplaceAddPass : public PassInfoMixin<ReplaceAddPass> {
           if (!BinOp)
             continue;
 
-          if (BinOp->getOpcode() != Instruction::Add)
+          StringRef FunctionName = getFunctionName(BinOp->getOpcode());
+
+          if (FunctionName.empty())
             continue;
+
+          Function *ReplacementFunction = M.getFunction(FunctionName);
+
+          if (!ReplacementFunction)
+            continue;
+
+          if (&F == ReplacementFunction)
+            continue;
+
+          if (ReplacementFunction->arg_size() != 2)
+            continue;
+
+          FunctionType *FunctionType = ReplacementFunction->getFunctionType();
 
           Value *Op0 = BinOp->getOperand(0);
           Value *Op1 = BinOp->getOperand(1);
 
-          // Типы операндов должны совпадать
-          // с типами аргументов функции add
-          if (AddType->getParamType(0) != Op0->getType())
+          if (FunctionType->getParamType(0) != Op0->getType())
             continue;
 
-          if (AddType->getParamType(1) != Op1->getType())
+          if (FunctionType->getParamType(1) != Op1->getType())
             continue;
 
-          // Тип результата тоже должен совпадать
-          if (AddType->getReturnType() != BinOp->getType())
+          if (FunctionType->getReturnType() != BinOp->getType())
             continue;
 
           IRBuilder<> Builder(BinOp);
 
-          CallInst *Call = Builder.CreateCall(AddFunction, {Op0, Op1});
+          CallInst *Call = Builder.CreateCall(ReplacementFunction, {Op0, Op1});
 
           BinOp->replaceAllUsesWith(Call);
           Call->takeName(BinOp);
@@ -79,13 +95,13 @@ struct ReplaceAddPass : public PassInfoMixin<ReplaceAddPass> {
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "ReplaceAddPlugin", "1.0",
+  return {LLVM_PLUGIN_API_VERSION, "ReplaceBinaryOpsPlugin", "1.0",
           [](PassBuilder &PB) {
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, ModulePassManager &MPM,
                    ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "replace-add") {
-                    MPM.addPass(ReplaceAddPass());
+                  if (Name == "replace-binops") {
+                    MPM.addPass(ReplaceBinaryOpsPass());
                     return true;
                   }
                   return false;
