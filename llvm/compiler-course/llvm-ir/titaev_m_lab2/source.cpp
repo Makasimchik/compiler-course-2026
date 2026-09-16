@@ -4,12 +4,14 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
+#include <optional>
+#include <string>
 
 using namespace llvm;
 
 namespace {
 
-static StringRef getFunctionName(unsigned Opcode) {
+static std::optional<std::string> getFunctionName(unsigned Opcode) {
   switch (Opcode) {
   case Instruction::Add:
     return "add";
@@ -22,7 +24,7 @@ static StringRef getFunctionName(unsigned Opcode) {
   case Instruction::UDiv:
     return "udiv";
   default:
-    return "";
+    return std::nullopt;
   }
 }
 
@@ -39,12 +41,12 @@ struct ReplaceBinaryOpsPass : public PassInfoMixin<ReplaceBinaryOpsPass> {
           if (!BinOp)
             continue;
 
-          StringRef FunctionName = getFunctionName(BinOp->getOpcode());
+          auto FunctionName = getFunctionName(BinOp->getOpcode());
 
-          if (FunctionName.empty())
+          if (!FunctionName)
             continue;
 
-          Function *ReplacementFunction = M.getFunction(FunctionName);
+          Function *ReplacementFunction = M.getFunction(*FunctionName);
 
           if (!ReplacementFunction)
             continue;
